@@ -11,7 +11,7 @@ hidapi>=0.15.0
 # AI/ML frameworks for gesture recognition
 torch>=1.9.0
 torchvision>=0.10.0
-mediapipe>=0.8.0
+mediapipe>=0.10,<0.11   # 1.x removed mp.solutions, which modes/asl.py uses
 
 # Computer vision and image processing
 opencv-python>=4.5.0
