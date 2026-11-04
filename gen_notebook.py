@@ -15,7 +15,7 @@ def code(*lines):
 
 
 cells = [
-    md("# Train custom **ball** detector (YOLOv8n) for the Tria QCS6490",
+    md("# Train custom **ball** detector (YOLOv8n) for the Arduino VENTUNO Q",
        "**Web Colab:** Runtime - Change runtime type - **T4 GPU**, then Runtime - Run all.",
        "",
        "**Before running:** upload **ball_dataset.zip** to your Google Drive **My Drive** (root)."),

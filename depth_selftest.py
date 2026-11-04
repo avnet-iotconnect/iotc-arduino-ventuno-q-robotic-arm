@@ -10,7 +10,7 @@ scene.
 
 Usage::
 
-    /root/miniforge3/envs/iotc-tria-xarm/bin/python3 depth_selftest.py [--camera 2]
+    ~/miniforge3/envs/iotc-ventuno-xarm/bin/python3 depth_selftest.py [--camera N]
 
 The MJPEG demo (./start_yolo.sh) holds the camera — stop it before running.
 """

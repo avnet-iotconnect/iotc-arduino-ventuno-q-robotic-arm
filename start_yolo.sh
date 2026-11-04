@@ -6,13 +6,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-source /root/miniforge3/etc/profile.d/conda.sh
-conda activate iotc-tria-xarm
-
-# QNN HTP delegate runtime env: the Hexagon skel libs live here, and the
-# delegate + its deps live in /usr/lib. Set both so the NPU binds regardless
-# of how the shell was started.
-export ADSP_LIBRARY_PATH=/usr/lib/rfsa/adsp
-export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH
+# Python env + NPU runtime paths for this board.
+source "$SCRIPT_DIR/board_env.sh"
 
 exec stdbuf -oL -eL python -u yolo_pickplace.py "$@"

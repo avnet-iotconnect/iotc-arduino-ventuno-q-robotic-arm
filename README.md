@@ -1,8 +1,16 @@
-# Tria VisionAI Kit 6490 + /IOTCONNECT — XArm Vision Demos
+# Arduino VENTUNO Q + /IOTCONNECT — XArm Vision Demos
+
+> [!NOTE]
+> This is the **Arduino VENTUNO Q** branch (`ventuno-q`) of the Tria VisionAI
+> Kit 6490 robotic-arm demo. The demos, arm, camera and cloud setup are the
+> same as on `main`; only the board and its software setup differ (Ubuntu
+> 24.04, the `arduino` user instead of root, Qualcomm's apt packages for the
+> NPU runtime, and the GNOME desktop instead of Weston). Board-specific paths
+> live in [board_env.sh](board_env.sh).
 
 Three independent vision-driven robotic-arm demos that all run on the same
-**Tria VisionAI Kit 6490** (Qualcomm QCS6490 SoC) board and stream telemetry +
-accept remote commands through **/IOTCONNECT**. Each demo highlights a
+**Arduino VENTUNO Q** (Qualcomm Dragonwing IQ-8275 SoC, 40 TOPS Hexagon NPU)
+board and stream telemetry + accept remote commands through **/IOTCONNECT**. Each demo highlights a
 different rung of perception sophistication on the same hardware:
 
 ```
@@ -15,16 +23,17 @@ The progression is the demo: same arm, same camera, same cloud platform —
 showing classical CV vs. NPU-accelerated deep learning side by side.
 
 > [!TIP]
-> It is strongly recommended that users complete the [/IOTCONNECT basic quickstart guide for the TRIA VISION AI-KIT 6490](https://github.com/avnet-iotconnect/iotc-python-lite-sdk-demos/tree/main/tria-vision-ai-kit-6490)
-> so they can familiarize themselves with the hardware and the /IOTCONNECT UI before proceeding on to this project.
+> If you are new to /IOTCONNECT, the [/IOTCONNECT Python Lite SDK demos](https://github.com/avnet-iotconnect/iotc-python-lite-sdk-demos)
+> are a good way to get familiar with the /IOTCONNECT UI before proceeding on to this project.
 
 ---
 
 ## Hardware Requirements
 
-### Included with **[TRIA Vision AI-KIT 6490](https://www.newark.com/avnet/sm2-sk-qcs6490-ep6-kit001/dev-kit-64bit-arm-cortex-a55-a78/dp/51AM9843)**
-- USB-C Cable for flashing and USB-ADB debug (included with kit)
-- USB-C 12VDC Power Supply and Cable (included with kit)
+### Board
+- **[Arduino VENTUNO Q](https://store.arduino.cc/products/ventuno-q)**
+- Power: a 5V/3A USB-C supply, or 12–24 VDC on the barrel jack
+- USB-C cable to a PC (optional — for `adb shell` access during setup)
 
 ### Purchased Separately
 - **[Hiwonder xArm 1S](https://www.amazon.com/LewanSoul-Programmable-Feedback-Parameter-Programming/dp/B0CHY63V9P?th=1)** — 6-DOF arm + gripper, USB
@@ -40,16 +49,11 @@ showing classical CV vs. NPU-accelerated deep learning side by side.
 > calibration necessary.
 
 - USB Mouse and Keyboard
-- HDMI Monitor with **active** mini-DP to HDMI adapter
+- HDMI Monitor and HDMI cable (the VENTUNO Q has a full-size HDMI port)
 - One practice ball (Nerf Rival Ammo balls work well — small, matte, compress
   slightly inside the gripper)
 - A target drop box (any small container in a distinct color, e.g. blue) — for
   demo #2 pickplace and demo #3
-
-> [!IMPORTANT]
-> The mini-DP to HDMI adapter must be **active**. To avoid purchasing the wrong
-> product it is recommended to use the adapter tested by Avnet's engineer,
-> available [here](https://www.amazon.com/Cable-Matters-DisplayPort-Supporting-Technology/dp/B00PJ3LSIG/).
 
 ---
 
@@ -85,13 +89,13 @@ showing classical CV vs. NPU-accelerated deep learning side by side.
 
 <img src="./media/final-camera-mounted.png">
 
-### TRIA Vision AI Kit 6490 Hardware Setup
+### Arduino VENTUNO Q Hardware Setup
 
-- Connect 12 VDC USB-C power supply to the USB-C "DC PWR" connector
-- Connect ethernet cable to the board's ethernet port
-- Connect USB mouse and keyboard to USB-A ports
-- Connect a second USB-C cable for USB-ADB communication
-- Connect the USB camera
+- Connect ethernet cable to the board's 2.5GbE port (or use Wi-Fi)
+- Connect the HDMI monitor
+- Connect the xArm USB cable and the USB camera to the two USB-A ports. With a
+  mouse + keyboard as well, use a powered USB hub.
+- Connect power (USB-C 5V/3A, or 12–24 VDC barrel jack)
 
 ---
 
@@ -104,51 +108,47 @@ showing classical CV vs. NPU-accelerated deep learning side by side.
 
 ### 1. Board Bring-Up
 
-1. **Power On**: Hold the S1 button for 2–3 seconds until the red LED turns off.
-2. **SSH into the board**:
-   ```bash
-   ssh root@<board-ip>
-   ```
-   Login with password `oelinux123`.
+1. **Power on** and complete Arduino's first-boot screens on the HDMI monitor
+   (accept the terms, set up the `arduino` user). Until this is done the
+   desktop does not start.
+2. **Get a shell on the board**, either:
+   - from a PC over the USB-C cable: `adb shell` (`adb` ships with
+     [Arduino App Lab](https://www.arduino.cc/en/software)), or
+   - over the network, after enabling SSH once from the board's terminal:
+     ```bash
+     sudo systemctl enable --now ssh
+     ssh arduino@<board-ip>
+     ```
 
-### 2. Clone + Python Environment
+### 2. Clone + Bootstrap
+
+Clone this branch into the `arduino` user's home and run the bootstrap
+script **as `arduino` (not root)** — it asks for the `arduino` password once
+for the system steps:
 
 ```bash
-git clone https://github.com/avnet-iotconnect/iotc-tria-vision-ai-kit-robotic-arm.git
+cd ~
+git clone -b ventuno-q https://github.com/avnet-iotconnect/iotc-tria-vision-ai-kit-robotic-arm.git
 cd iotc-tria-vision-ai-kit-robotic-arm
+./bootstrap-new-board.sh
 ```
 
-Install Miniforge (conda) — download and run the installer:
+[bootstrap-new-board.sh](bootstrap-new-board.sh) is idempotent (safe to
+re-run) and does everything the Tria image provides out of the box:
+
+| Step | What |
+|---|---|
+| NPU runtime | `apt install qairt-libs qairt-dsp-binaries` from the board's Qualcomm PPA — `/usr/lib/libQnnTFLiteDelegate.so` + the Hexagon v75 libs in `/usr/lib/dsp/cdsp` |
+| xArm access | udev rule so the `arduino` user can open the arm over USB HID |
+| Models | YOLO-X and MiDaS-V2 w8a8 from Qualcomm AI Hub into `/etc/models` (labels into `/etc/labels`) |
+| Python | Miniforge in `~/miniforge3`, conda env `iotc-ventuno-xarm` (Python 3.11 + OpenCV), `requirements.txt` + `requirements-yolo.txt` |
+| Demo files | PointNet weights (demo #1), default `camera_settings.json` |
+| Desktop | "XArm: …" launchers in the GNOME app grid (calibrate ball/box, ball demo, pick-place demo, terminal) |
+| Autostart | `robotarm.service` (runs [deploy/arm_watchdog.sh](deploy/arm_watchdog.sh) as `arduino`) — boots the app in IDLE |
+
+Check the NPU afterwards (needs the USB camera plugged in):
 ```bash
-wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
-bash Miniforge3-$(uname)-$(uname -m).sh
-```
-
-Respond to each prompt as follows:
-- **License agreement**: Press **ENTER** to scroll through, then type `yes` and **ENTER** to accept.
-- **Installation location**: Press **ENTER** to confirm the default path.
-- **Shell initialization**: Type `yes` and **ENTER** when asked `Proceed with initialization?`
-
-Reload your shell so `conda` becomes available:
-```bash
-source ~/.bashrc
-```
-
-The board's login shell does not source `.bashrc` automatically on reboot. Run
-this once to fix that permanently:
-```bash
-echo '. ~/.bashrc' >> ~/.profile
-```
-
-Create the conda environment and install dependencies:
-```bash
-conda create -y -n iotc-tria-xarm python=3.11 pip
-conda activate iotc-tria-xarm
-conda install opencv -c conda-forge
-python -m pip install -r requirements.txt
-
-# Optional: NPU inference dependency (only for demo #3)
-python -m pip install -r requirements-yolo.txt
+source board_env.sh && python yolo_selftest.py   # expect: NPU=YES (Hexagon HTP via QNN)
 ```
 
 ### 3. ASL Model Weights (Demo #1 Only)
@@ -177,7 +177,7 @@ Demo #1 will refuse to start with a clear error if this file is absent.
 > and will not be affected.
 
 Follow [this guide](https://github.com/avnet-iotconnect/iotc-python-lite-sdk-demos/blob/main/common/general-guides/UI-ONBOARD.md)
-to onboard your TRIA Vision AI Kit 6490 to /IOTCONNECT.
+to onboard your Arduino VENTUNO Q to /IOTCONNECT.
 
 > [!CAUTION]
 > In **Step 14** of the onboarding guide, you must run the quickstart script from
@@ -203,29 +203,34 @@ will then publish telemetry and accept remote commands automatically.
 After the board has been set up and rebooted, run these commands each time to
 start the demo:
 
-1. **SSH into the board**:
-   ```bash
-   ssh root@<board-ip>
-   ```
-   Login with password `oelinux123`.
+The bootstrap installs `robotarm.service`, which starts the app in IDLE on
+every boot (arm still, cloud connected) — start/stop movement from the
+dashboard with `set_mode`. To run it by hand instead:
 
-2. **Activate the environment and launch**:
+1. **Get a shell on the board** (`ssh arduino@<board-ip>` or `adb shell`) and
+   pause the autostart supervisor so it doesn't fight you for the arm:
    ```bash
-   source ~/.bashrc
-   conda activate iotc-tria-xarm
+   touch /tmp/demo_watchdog_off && pkill -f 'python -u main.py'
+   ```
+
+2. **Launch** ([start.sh](start.sh) activates the conda env and NPU paths
+   from [board_env.sh](board_env.sh)):
+   ```bash
    cd ~/iotc-tria-vision-ai-kit-robotic-arm
-   python3 main.py --webrtc
+   ./start.sh --webrtc
    ```
 
    > [!NOTE]
-   > The `source ~/.bashrc` line is needed because the board's login shell does not
-   > load conda automatically on reboot. It is safe to run every time.
+   > From SSH/adb the preview window only reaches the HDMI monitor through
+   > the desktop session — use `./launch_gui.sh ball` (etc.), or the
+   > "XArm: …" launchers on the desktop. Resume autostart with
+   > `rm /tmp/demo_watchdog_off`.
 
    > [!NOTE]
    > If running over SSH with no monitor connected, add `--headless` to suppress
    > the camera preview window:
    > ```bash
-   > python3 main.py --webrtc --headless
+   > ./start.sh --webrtc --headless
    > ```
 
    > [!NOTE]
@@ -359,8 +364,8 @@ recalibration; can't distinguish a colored ball from a similarly-colored
 backdrop.
 
 > [!NOTE]
-> This demo is intended to showcase the potential capabilities of the TRIA VISION
-> AI-KIT in conjunction with robotics and /IOTCONNECT. The consistency of success
+> This demo is intended to showcase the potential capabilities of the Arduino
+> VENTUNO Q in conjunction with robotics and /IOTCONNECT. The consistency of success
 > with the ball-follow demo is reliant on camera angle and positioning, lighting,
 > calibration, ball position, and surface/room colors. If your setup cannot
 > reliably pick up the target ball, tweak the code and calibration sequences until
@@ -539,7 +544,7 @@ Each payload (sent every ~2 s) carries:
 
 <img src="./media/dashboard.png">
 
-To monitor and control your TRIA Vision AI Kit 6490 Robotic Arm demo with an
+To monitor and control your Arduino VENTUNO Q Robotic Arm demo with an
 interactive dashboard in /IOTCONNECT:
 
 1. Download the [provided dashboard template](robotic_arm_dashboard_export.json)
@@ -572,7 +577,7 @@ Combined NPU load: **~7 ms YOLO + ~5 ms depth per frame** through the QNN TFLite
 delegate, leaving the CPU free for the control loop. Live latency, fps, and depth
 values stream to /IOTCONNECT as telemetry.
 
-**Best for:** showing the QCS6490 Hexagon NPU doing real, useful AI work that the
+**Best for:** showing the IQ-8275 Hexagon NPU doing real, useful AI work that the
 CPU-only demo can't — with side-by-side comparison via demo #2.
 
 **Trade-off:** requires a per-site **D_grab teach** (MiDaS depth values are
@@ -781,10 +786,11 @@ model doesn't recognize your specific ball.
 
 ## References
 
-### TRIA Vision AI Kit 6490
-- [TRIA Vision AI Kit 6490 Setup Guide](https://github.com/avnet-iotconnect/iotc-python-lite-sdk-demos/tree/main/tria-vision-ai-kit-6490) — Complete setup and configuration guide
-- [TRIA Vision AI-KIT 6490 Product Page](https://www.newark.com/avnet/sm2-sk-qcs6490-ep6-kit001/dev-kit-64bit-arm-cortex-a55-a78/dp/51AM9843) — Hardware specifications and purchase information
-- [TRIA Startup Guide](https://avnet.com/wcm/connect/137a97f1-eb6e-48ba-89a4-40b024558593/Vision+AI-KIT+6490+Startup+Guide+v1.3.pdf?MOD=AJPERES&attachment=true&id=1761931434976) — Hardware setup and cable connections
+### Arduino VENTUNO Q
+- [Arduino VENTUNO Q Product Page](https://store.arduino.cc/products/ventuno-q) — Hardware specifications and purchase information
+- [Qualcomm Dragonwing Ubuntu — LiteRT on the NPU](https://dragonwingdocs.qualcomm.com/Ubuntu/ai-workflows/lite-rt) — TFLite + QNN delegate setup this branch follows
+- [Qualcomm AI Hub models](https://aihub.qualcomm.com/iot/models/) — source of the YOLO-X / MiDaS-V2 w8a8 models
+- `main` branch of this repo — the original Tria VisionAI Kit 6490 version
 
 ### /IOTCONNECT
 - [/IOTCONNECT Python SDK](https://github.com/avnet-iotconnect/avnet-iotconnect-python-sdk) — /IOTCONNECT Python SDK for cloud connectivity

@@ -1,18 +1,24 @@
 #!/bin/bash
-# Bootstrap a fresh Tria Vision AI Kit (QCS6490) board for the IOTCONNECT
-# XArm demo. Idempotent — safe to re-run if a step fails halfway through.
+# Bootstrap a fresh Arduino VENTUNO Q (Qualcomm Dragonwing IQ-8275, Ubuntu
+# 24.04) for the IOTCONNECT XArm demo. Idempotent — safe to re-run if a step
+# fails halfway through.
 #
-# Run from an SSH session on the new board. If you ever rebuild a board
-# from scratch, this is the script that takes you from "fresh image" to
-# "ready to start.sh, just need to drop in credentials + calibrate."
+# Run as the board's `arduino` user (NOT root) from a shell on the board —
+# SSH, the HDMI desktop terminal, or `adb shell` from a PC over the USB-C
+# cable. System steps call sudo and ask for the `arduino` password once.
 #
 # What this DOES handle automatically:
-#   - miniforge3 install
-#   - conda env iotc-tria-xarm with python 3.11 + opencv
-#   - pip install requirements.txt
+#   - Qualcomm NPU runtime from the board's qcom PPA (qairt-libs: TFLite QNN
+#     delegate; qairt-dsp-binaries: Hexagon v75 skel libs in /usr/lib/dsp/cdsp)
+#   - udev rule so the `arduino` user can open the xArm over USB HID
+#   - YOLO-X + MiDaS-V2 w8a8 models into /etc/models (+ labels into
+#     /etc/labels) — the Tria image ships these; the VENTUNO Q does not
+#   - miniforge3 + conda env iotc-ventuno-xarm (python 3.11 + opencv)
+#   - pip install requirements.txt + requirements-yolo.txt
 #   - PointNet model download (model/get_model.sh)
 #   - camera_settings.json with the locked-camera recipe (auto_wb=0, etc.)
-#   - Weston panel icons + launchers (so the HDMI display gets calibration buttons)
+#   - desktop launchers on the HDMI GNOME desktop (calibrate / demo buttons)
+#   - robotarm.service autostart (boots the app in IDLE)
 #
 # What you STILL have to do MANUALLY (in this order):
 #   1. Place the 3 IoTConnect credential files in the project dir BEFORE start.sh
@@ -20,12 +26,12 @@
 #        - iotcDeviceConfig.json
 #        - device-cert.pem
 #        - device-pkey.pem
-#      Either SCP them from your Windows machine, or download fresh from your
+#      Either SCP / adb push them from your PC, or download fresh from your
 #      IoTConnect dashboard's device entry. Without these, main.py runs but
 #      can't reach IoTConnect.
 #
-#   2. Connect hardware: USB hub → Tria, xArm USB → hub, Brio camera → hub,
-#      arm power adapter (7.5V) → wall, arm switch → ON.
+#   2. Connect hardware: xArm USB → VENTUNO Q USB-A, USB camera → the other
+#      USB-A (or a hub), arm power adapter (7.5V) → wall, arm switch → ON.
 #
 #   3. Calibrate. None of these can be automated; they need eyes on the arm:
 #        - calibrate_ball                  (cloud cmd; click ball in browser)
@@ -34,90 +40,140 @@
 #        - teach_scan_pose center/left/right (cloud cmd; release_torque, hand-pose, hold_pose, capture)
 #        - teach_drop_pose                 (cloud cmd; pose gripper above box, snapshot)
 #
-# Once 1-3 are done, ./start.sh --mode pickplace --camera 2 --headless --web-port 8000
+# Once 1-3 are done, ./start.sh --mode pickplace --headless --web-port 8000
 
 set -e
 
-PROJECT_DIR="/root/iotc-tria-vision-ai-kit-robotic-arm"
-ICONS_DIR="$PROJECT_DIR/icons"
-WESTON_INI="/etc/xdg/weston/weston.ini"
-CONDA_ENV="iotc-tria-xarm"
-MINIFORGE_DIR="/root/miniforge3"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUN_USER="$(id -un)"
+CONDA_ENV="iotc-ventuno-xarm"
+MINIFORGE_DIR="$HOME/miniforge3"
+
+# Qualcomm AI Hub w8a8 TFLite models — same files + names the Tria image ships
+# in /etc/models (URLs from quic/sample-apps-for-qualcomm-linux
+# download_artifacts.sh). Chip-agnostic: the QNN delegate compiles them for
+# the v75 HTP at load time.
+MODELS_DIR=/etc/models
+LABELS_DIR=/etc/labels
+YOLOX_URL="https://huggingface.co/qualcomm/Yolo-X/resolve/v0.30.5/Yolo-X_w8a8.tflite"
+MIDAS_URL="https://huggingface.co/qualcomm/Midas-V2/resolve/v0.29.1/Midas-V2_w8a8.tflite"
+LABELS_URL="https://github.com/quic/sample-apps-for-qualcomm-linux/releases/download/GA1.6-labels/labels.zip"
 
 echo "=================================================================="
-echo "  Tria board bootstrap — $(date -u +%FT%TZ)"
+echo "  VENTUNO Q board bootstrap — $(date -u +%FT%TZ)"
 echo "=================================================================="
 
-# ---- 1. Ensure we're root and in the project dir ------------------------
-if [ "$(id -u)" != "0" ]; then
-    echo "ERROR: must run as root."
-    exit 1
-fi
-if [ ! -d "$PROJECT_DIR" ]; then
-    echo "ERROR: $PROJECT_DIR not found."
-    echo "Clone the repo first:"
-    echo "  cd /root && git clone https://github.com/avnet-iotconnect/iotc-tria-vision-ai-kit-robotic-arm.git"
+# ---- 0. Run as the board user, from the project dir ---------------------
+if [ "$(id -u)" = "0" ]; then
+    echo "ERROR: run as the board user (arduino), not root — the demo runs as"
+    echo "       that user and system steps use sudo."
     exit 1
 fi
 cd "$PROJECT_DIR"
+sudo -v   # ask for the password once, up front
 
-# ---- 2. Install miniforge3 if missing -----------------------------------
+# ---- 1. Qualcomm NPU runtime --------------------------------------------
+# The board image has the ubuntu-qcom-iot PPA configured but not the AI
+# runtime. qairt-libs provides /usr/lib/libQnnTFLiteDelegate.so (same path
+# as on the Tria); qairt-dsp-binaries links the QCS8300-family Hexagon skel
+# libs into /usr/lib/dsp/cdsp (ADSP_LIBRARY_PATH, see board_env.sh).
+echo
+echo "[1/10] Installing Qualcomm NPU runtime (qairt-libs, qairt-dsp-binaries)..."
+sudo apt-get update -q
+sudo apt-get install -y -q qairt-libs qairt-dsp-binaries v4l-utils unzip curl
+
+# ---- 2. xArm USB access -------------------------------------------------
+# The xArm (STMicro 0483:5750) is a USB HID device. Root could always open it
+# on the Tria; the `arduino` user needs a udev rule (it's in `dialout`).
+echo
+echo "[2/10] Installing xArm udev rule..."
+sudo tee /etc/udev/rules.d/99-xarm.rules >/dev/null <<'EOF'
+# Hiwonder xArm 1S (STMicro 0483:5750) — let the demo user open it over HID
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5750", MODE="0660", GROUP="dialout", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="5750", MODE="0660", GROUP="dialout", TAG+="uaccess"
+EOF
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=hidraw --subsystem-match=usb || true
+
+# ---- 3. YOLO-X + MiDaS models + labels ----------------------------------
+echo
+echo "[3/10] Installing NPU models into $MODELS_DIR ..."
+sudo mkdir -p "$MODELS_DIR" "$LABELS_DIR"
+fetch_model() {   # url dest
+    if [ -s "$2" ]; then
+        echo "    $2 already present — skipping"
+    else
+        echo "    downloading $(basename "$2")"
+        sudo curl -fsSL -o "$2.part" "$1" && sudo mv "$2.part" "$2"
+    fi
+}
+fetch_model "$YOLOX_URL" "$MODELS_DIR/yolox_quantized.tflite"
+fetch_model "$MIDAS_URL" "$MODELS_DIR/midas_quantized.tflite"
+if [ ! -s "$LABELS_DIR/yolox.json" ]; then
+    tmp=$(mktemp -d)
+    curl -fsSL -o "$tmp/labels.zip" "$LABELS_URL"
+    unzip -q -o "$tmp/labels.zip" -d "$tmp"
+    sudo cp "$tmp"/labels/* "$LABELS_DIR"/
+    rm -rf "$tmp"
+    echo "    labels installed in $LABELS_DIR"
+else
+    echo "    $LABELS_DIR/yolox.json already present — skipping"
+fi
+
+# ---- 4. Install miniforge3 if missing -----------------------------------
 if [ ! -d "$MINIFORGE_DIR" ]; then
     echo
-    echo "[1/6] Installing miniforge3..."
-    cd /root
-    if [ ! -f "Miniforge3-Linux-aarch64.sh" ]; then
-        wget -q "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh"
-    fi
-    bash Miniforge3-Linux-aarch64.sh -b -p "$MINIFORGE_DIR"
-    cd "$PROJECT_DIR"
+    echo "[4/10] Installing miniforge3 into $MINIFORGE_DIR ..."
+    tmp=$(mktemp -d)
+    curl -fsSL -o "$tmp/Miniforge3-Linux-aarch64.sh" \
+        "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh"
+    bash "$tmp/Miniforge3-Linux-aarch64.sh" -b -p "$MINIFORGE_DIR"
+    rm -rf "$tmp"
 else
-    echo "[1/6] miniforge3 already at $MINIFORGE_DIR — skipping install"
+    echo "[4/10] miniforge3 already at $MINIFORGE_DIR — skipping install"
 fi
 
 # Source conda for the rest of this script
 source "$MINIFORGE_DIR/etc/profile.d/conda.sh"
 
 # Use absolute paths to the env's binaries throughout. `conda activate` in a
-# non-interactive script doesn't always prepend PATH reliably, and the system
-# /usr/bin/pip3 is broken on this board image (no `pip` module installed),
-# so calling bare `pip3` falls through to it and crashes.
+# non-interactive script doesn't always prepend PATH reliably, and Ubuntu's
+# system python has no pip.
 ENV_BIN="$MINIFORGE_DIR/envs/$CONDA_ENV/bin"
 ENV_PYTHON="$ENV_BIN/python3"
 
-# ---- 3. Create conda env if missing -------------------------------------
+# ---- 5. Create conda env if missing -------------------------------------
 if ! conda env list | grep -qE "^$CONDA_ENV\s"; then
     echo
-    echo "[2/6] Creating conda env $CONDA_ENV..."
+    echo "[5/10] Creating conda env $CONDA_ENV..."
     conda create -y -n "$CONDA_ENV" python=3.11
     conda install -y -n "$CONDA_ENV" opencv -c conda-forge
 else
-    echo "[2/6] conda env $CONDA_ENV exists — skipping create"
+    echo "[5/10] conda env $CONDA_ENV exists — skipping create"
 fi
 
-# ---- 4. Install pip requirements ----------------------------------------
-# Use `python -m pip` instead of a `pip`/`pip3` binary path — different conda
-# env builds ship pip under different names (some have `pip`, some only
-# `pip3`, some neither until ensurepip is run). `-m pip` always works as
+# ---- 6. Install pip requirements ----------------------------------------
+# `python -m pip` instead of a `pip`/`pip3` binary path — always works as
 # long as the env's python is functional.
 echo
-echo "[3/6] Installing pip requirements..."
+echo "[6/10] Installing pip requirements..."
 "$ENV_PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
 "$ENV_PYTHON" -m pip install -q -r requirements.txt
+"$ENV_PYTHON" -m pip install -q -r requirements-yolo.txt
 
-# ---- 5. Download PointNet model if missing ------------------------------
+# ---- 7. Download PointNet model if missing ------------------------------
 if [ ! -f "$PROJECT_DIR/model/point_net_1.pth" ]; then
     echo
-    echo "[4/6] Downloading PointNet model..."
+    echo "[7/10] Downloading PointNet model..."
     bash model/get_model.sh
 else
-    echo "[4/6] PointNet model already present — skipping download"
+    echo "[7/10] PointNet model already present — skipping download"
 fi
 
-# ---- 6. Drop in camera_settings.json (the locked-camera recipe) --------
+# ---- 8. Drop in camera_settings.json (the locked-camera recipe) --------
 if [ ! -f "$PROJECT_DIR/camera_settings.json" ]; then
     echo
-    echo "[5/6] Writing camera_settings.json with the locked-camera recipe"
+    echo "[8/10] Writing camera_settings.json with the locked-camera recipe"
     echo "      (auto_wb=0, auto_exposure=1 manual, exposure=300, gain=80,"
     echo "       wb_temperature=5400, saturation=180 — Brio 100, normal indoor)"
     cat > "$PROJECT_DIR/camera_settings.json" <<'EOF'
@@ -131,121 +187,60 @@ if [ ! -f "$PROJECT_DIR/camera_settings.json" ]; then
 }
 EOF
 else
-    echo "[5/6] camera_settings.json already present — skipping (delete it if you want to reset)"
+    echo "[8/10] camera_settings.json already present — skipping (delete it if you want to reset)"
 fi
 
-# ---- 7. Make sure all .sh helpers are executable ------------------------
-chmod +x start.sh calibrate.sh calibrate_offset.sh teach.sh launch_gui.sh 2>/dev/null || true
+# Make sure all .sh helpers are executable
+chmod +x ./*.sh deploy/*.sh 2>/dev/null || true
 
-# ---- 8. Generate Weston panel icons + patch weston.ini ------------------
-# These give the HDMI desktop four launcher buttons for ball-calibrate,
-# box-calibrate, ball demo, and pickplace demo. Skip if Weston isn't running
-# (dev/test environment without a display).
-if [ -f "$WESTON_INI" ]; then
-    echo
-    echo "[6/6] Setting up Weston panel icons + launchers..."
-    mkdir -p "$ICONS_DIR"
-    "$ENV_PYTHON" - <<EOF
-import os
-from PIL import Image, ImageDraw, ImageFont
-OUT = "$ICONS_DIR"
-SIZE = 28
-ICONS = [
-    ("ball_calibrate.png", "B+", (255, 200, 50, 255), "circle"),
-    ("box_calibrate.png",  "X+", (50, 180, 255, 255), "rect"),
-    ("ball_demo.png",      "B>", (50, 220, 100, 255), "circle"),
-    ("pickplace_demo.png", "P>", (220, 80, 200, 255), "rect"),
-]
-for fname, label, fill, kind in ICONS:
-    if os.path.exists(os.path.join(OUT, fname)):
-        continue
-    img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    if kind == "circle":
-        d.ellipse((1, 1, SIZE - 2, SIZE - 2), fill=fill, outline=(0, 0, 0, 255), width=1)
-    else:
-        d.rounded_rectangle((1, 1, SIZE - 2, SIZE - 2), radius=4, fill=fill, outline=(0, 0, 0, 255), width=1)
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 13)
-    except (OSError, IOError):
-        font = ImageFont.load_default()
-    bbox = d.textbbox((0, 0), label, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    d.text(((SIZE - tw) // 2 - bbox[0], (SIZE - th) // 2 - bbox[1]), label, fill=(0, 0, 0, 255), font=font)
-    img.save(os.path.join(OUT, fname))
-print("    icons generated in", OUT)
+# ---- 9. Desktop launchers on the HDMI GNOME desktop ---------------------
+# Replaces the Tria's Weston panel icons: app-grid entries for ball-calibrate,
+# box-calibrate, ball demo, pickplace demo, and a project terminal.
+echo
+echo "[9/10] Installing desktop launchers..."
+APPS_DIR="$HOME/.local/share/applications"
+mkdir -p "$APPS_DIR"
+make_launcher() {   # file name cmd icon
+    cat > "$APPS_DIR/$1.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$2
+Exec=gnome-terminal --working-directory=$PROJECT_DIR -- $PROJECT_DIR/launch_gui.sh $3
+Icon=$4
+Terminal=false
+Categories=Utility;
 EOF
-
-    # Patch weston.ini ONCE — only if our launchers aren't already in there
-    if ! grep -q "launch_gui.sh" "$WESTON_INI"; then
-        echo "    patching weston.ini (backup: weston.ini.bak-pre-bootstrap)"
-        cp "$WESTON_INI" "$WESTON_INI.bak-pre-bootstrap"
-        cat > "$WESTON_INI" <<EOF
-# configuration file for Weston
-[core]
-require-outputs=none
-backend=sdm-backend.so
-
-[shell]
-clock-format=seconds
-background-image=/opt/bg_tria.png
-background-type=scale-crop
-cursor-theme=Adwaita
-cursor-size=32
-
-[launcher]
-icon=/opt/QCS6490-Vision-AI-Demo/resources_high/tria_demo_launcher_icon.png
-path=VISIONAI_PATH_OVERRIDE=/opt/QCS6490-Vision-AI-Demo/visionai.py /opt/QCS6490-Vision-AI-Demo/launch_visionai_with_env.sh
-
-[launcher]
-icon=$ICONS_DIR/ball_calibrate.png
-path=/usr/bin/weston-terminal --shell=/bin/bash -- $PROJECT_DIR/launch_gui.sh calibrate-ball
-
-[launcher]
-icon=$ICONS_DIR/box_calibrate.png
-path=/usr/bin/weston-terminal --shell=/bin/bash -- $PROJECT_DIR/launch_gui.sh calibrate-box
-
-[launcher]
-icon=/usr/share/weston/terminal.png
-path=/usr/bin/weston-terminal
-
-[launcher]
-icon=$ICONS_DIR/ball_demo.png
-path=/usr/bin/weston-terminal --shell=/bin/bash -- $PROJECT_DIR/launch_gui.sh ball
-
-[launcher]
-icon=$ICONS_DIR/pickplace_demo.png
-path=/usr/bin/weston-terminal --shell=/bin/bash -- $PROJECT_DIR/launch_gui.sh pickplace
-
-[launcher]
-icon=/opt/exit.png
-path=/opt/exit.sh
+}
+make_launcher xarm-ball-calibrate "XArm: Calibrate Ball"  calibrate-ball  applications-graphics
+make_launcher xarm-box-calibrate  "XArm: Calibrate Box"   calibrate-box   applications-graphics
+make_launcher xarm-ball-demo      "XArm: Ball Demo"       ball            media-playback-start
+make_launcher xarm-pickplace-demo "XArm: Pick-Place Demo" pickplace       media-playback-start
+cat > "$APPS_DIR/xarm-terminal.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=XArm: Terminal
+Exec=gnome-terminal --working-directory=$PROJECT_DIR
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
 EOF
-        echo "    weston.ini patched. Reboot or kill+restart Weston to pick up new panel."
-    else
-        echo "    weston.ini already has our launchers — skipping patch"
-    fi
-else
-    echo "[6/6] no Weston running ($WESTON_INI not found) — skipping panel setup"
-fi
+echo "    launchers in $APPS_DIR (search 'XArm' in the app grid)"
 
-# ---------------------------------------------------------------------------
-# Auto-start service: boot the demo in IDLE (arm still, cloud up), recover
-# from USB drops, and wait for DNS so a cold boot on a slow network still
-# connects to IoTConnect. Enabled (not started) — it starts on next boot,
-# after you've connected hardware + dropped in credentials.
-# ---------------------------------------------------------------------------
-if command -v systemctl >/dev/null 2>&1; then
-    echo "[+] installing robotarm autostart service"
-    install -m 0755 "$PROJECT_DIR/deploy/arm_watchdog.sh" /root/arm_watchdog.sh
-    install -m 0644 "$PROJECT_DIR/deploy/robotarm.service" /etc/systemd/system/robotarm.service
-    systemctl daemon-reload
-    systemctl enable robotarm.service
-    echo "    enabled robotarm.service — boots the app in IDLE on power-up."
-    echo "    (start now with: systemctl start robotarm.service)"
-else
-    echo "[+] no systemctl — skipping autostart service (launch manually via start.sh)"
-fi
+# ---- 10. Auto-start service ---------------------------------------------
+# Boots the demo in IDLE (arm still, cloud up), recovers from USB drops, and
+# waits for DNS + NTP so a cold boot still connects to IoTConnect. Runs
+# deploy/arm_watchdog.sh in place, as this user. Enabled (not started) — it
+# starts on next boot, after you've connected hardware + dropped in creds.
+echo
+echo "[10/10] Installing robotarm autostart service..."
+sed -e "s|^User=.*|User=$RUN_USER|" \
+    -e "s|^Environment=HOME=.*|Environment=HOME=$HOME|" \
+    -e "s|^ExecStart=.*|ExecStart=/bin/sh $PROJECT_DIR/deploy/arm_watchdog.sh|" \
+    deploy/robotarm.service | sudo tee /etc/systemd/system/robotarm.service >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl enable robotarm.service
+echo "    enabled robotarm.service — boots the app in IDLE on power-up."
+echo "    (start now with: sudo systemctl start robotarm.service)"
 
 echo
 echo "=================================================================="
@@ -258,34 +253,39 @@ echo "  1. Place 3 IoTConnect credential files in $PROJECT_DIR :"
 echo "       iotcDeviceConfig.json"
 echo "       device-cert.pem"
 echo "       device-pkey.pem"
-echo "     SCP them from your Windows machine, OR download fresh from your"
-echo "     IoTConnect dashboard's mclRoboARM3 device entry."
+echo "     SCP / adb push them from your PC, OR download fresh from your"
+echo "     IoTConnect dashboard's device entry."
 echo
 echo "  2. Connect hardware:"
-echo "       - USB hub plugged into the Tria"
-echo "       - xArm USB cable plugged into hub"
-echo "       - Brio camera plugged into hub"
+echo "       - xArm USB cable → VENTUNO Q USB-A"
+echo "       - USB camera     → the other USB-A (or a hub)"
 echo "       - 7.5V arm power adapter plugged into wall + arm"
 echo "       - Arm power switch ON"
 echo
 echo "  3. Verify hardware enumerates:"
-echo "       lsusb"
-echo "     Expect to see: TUSB8041 hub, Brio 100, STMicroelectronics LED badge (= xArm)"
+echo "       lsusb                      # expect STMicroelectronics 0483:5750 (= xArm) + your camera"
+echo "       v4l2-ctl --list-devices    # camera shows as a usb-... device"
 echo
 echo "  4. Smoke-test the arm (writes only — won't error if reads are flaky):"
-echo "       /root/miniforge3/envs/$CONDA_ENV/bin/python3 -c \\"
+echo "       $ENV_PYTHON -c \\"
 echo "         \"import xarm; a = xarm.Controller('USB'); a.setPosition([[i,500] for i in range(1,7)], duration=2000, wait=True)\""
 echo "     Watch the arm — it should move to neutral pose."
 echo
-echo "  5. Start the demo — it AUTO-STARTS on boot in IDLE (arm still, cloud up)"
+echo "  5. Smoke-test the NPU:"
+echo "       source board_env.sh && python yolo_selftest.py"
+echo "     Expect: NPU=YES (Hexagon HTP via QNN)"
+echo
+echo "  6. Start the demo — it AUTO-STARTS on boot in IDLE (arm still, cloud up)"
 echo "     via robotarm.service. To start it now without rebooting:"
-echo "       systemctl start robotarm.service"
+echo "       sudo systemctl start robotarm.service"
 echo "     Then from the IoTConnect dashboard, begin/stop movement with:"
 echo "       set_mode mode=yolo-pickplace   (start)"
 echo "       set_mode mode=idle             (stop, back to safe idle)"
 echo "     Logs: /tmp/yolo.log (app), /tmp/watchdog.log (supervisor)."
+echo "     The preview window shows on HDMI only while the arduino user is"
+echo "     logged in to the desktop; otherwise watch http://<board-ip>:8080/."
 echo
-echo "  6. From the IoTConnect dashboard, run calibrations in this order:"
+echo "  7. From the IoTConnect dashboard, run calibrations in this order:"
 echo "       calibrate_ball       (clicks open browser at http://<board-ip>:8000)"
 echo "       calibrate_box"
 echo "       calibrate_offset"
@@ -294,7 +294,7 @@ echo "       teach_scan_pose name=left"
 echo "       teach_scan_pose name=right"
 echo "       teach_drop_pose      (pose gripper above box, snapshot)"
 echo
-echo "  7. Run pickplace:"
+echo "  8. Run pickplace:"
 echo "       set_mode_pickplace   (cloud cmd)"
 echo "     Open http://<board-ip>:8000/ in any browser to watch."
 echo

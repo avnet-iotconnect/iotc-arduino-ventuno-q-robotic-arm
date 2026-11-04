@@ -20,9 +20,9 @@ After running this, you must:
   3. Run calibrate_cam_offset.py to calibrate camera-to-gripper offset,
      wrist/elbow view offsets, and wrist-roll compensation
 """
-import re, sys
+import os, re, sys
 
-PATH = "/root/iotc-tria-vision-ai-kit-robotic-arm/modes/ball_follow.py"
+PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modes", "ball_follow.py")
 
 with open(PATH) as f:
     src = f.read()

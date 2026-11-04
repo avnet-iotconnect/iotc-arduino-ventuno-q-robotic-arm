@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 Avnet
-"""TFLite + QNN detector for the Tria QCS6490 Hexagon NPU.
+"""TFLite + QNN detector for the Hexagon NPU (Arduino VENTUNO Q / IQ-8275).
 
 Supports two model families, autodetected from the output tensors:
 
@@ -13,7 +13,7 @@ Supports two model families, autodetected from the output tensors:
   standard decode: transpose, threshold, xywh→xyxy, NMS, letterbox-undo.
 
 Both run through the QNN HTP delegate on the Hexagon NPU (same runtime the
-bundled /opt/QCS6490-Vision-AI-Demo uses via GStreamer). Falls back to plain
+Qualcomm IM SDK GStreamer plugins use). Falls back to plain
 CPU TFLite if the delegate can't load, so the same code runs on a dev box.
 """
 
@@ -26,7 +26,7 @@ import numpy as np
 
 # The QNN HTP delegate + fastrpc read these at init. Set defensively so the
 # detector works when launched from any shell. Harmless if already set.
-os.environ.setdefault("ADSP_LIBRARY_PATH", "/usr/lib/rfsa/adsp")
+os.environ.setdefault("ADSP_LIBRARY_PATH", "/usr/lib/dsp/cdsp")  # VENTUNO Q skel libs
 
 
 @contextlib.contextmanager

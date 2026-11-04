@@ -1,6 +1,7 @@
 #!/bin/bash
 # Wrapper that sets the Wayland environment so a GUI command launched from
-# SSH (or the Weston panel) renders on the board's HDMI display.
+# SSH (or a desktop launcher) renders on the board's HDMI display (the
+# VENTUNO Q's GNOME session for the logged-in `arduino` user).
 # Output streams to this terminal — Ctrl-C to stop.
 #
 # Usage:
@@ -11,14 +12,14 @@
 #   ./launch_gui.sh ball               # runs the ball-follow demo
 #   ./launch_gui.sh pickplace          # runs the pick-and-place demo
 #   ./launch_gui.sh asl                # runs the ASL gesture demo
-#   ./launch_gui.sh shell              # spawns a weston-terminal in this dir (handy panel button)
+#   ./launch_gui.sh shell              # opens a terminal in this dir on the HDMI desktop
 #
 # Pass extra args after the command name and they're forwarded:
 #   ./launch_gui.sh ball --camera 2
 #
-# Camera index defaults to 2 (direct UVC to the Brio at /dev/video2). DO NOT
-# use --camera 1 — that's the Qualcomm cam-serve shim which silently rejects
-# every V4L2 control set/get, breaking camera_settings.json.
+# The USB camera is auto-detected (camera_settings.find_brio_index). On the
+# VENTUNO Q, /dev/video0, video1, video32 and video33 are Qualcomm
+# platform/codec nodes, not cameras — pass --camera only to override.
 #
 # Only one process can hold the camera + xarm USB at a time — don't launch
 # two demos concurrently.
@@ -28,17 +29,18 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Wayland output (HDMI display owned by the Weston compositor).
-export XDG_RUNTIME_DIR=/dev/socket/weston
-export WAYLAND_DISPLAY=wayland-1
-# Tell Qt (used by cv2.imshow + most python GUIs) to use the Wayland plugin
-# instead of xcb (which fails because there's no X server).
-export QT_QPA_PLATFORM=wayland
+# Python env ($PYTHON) + NPU runtime paths for this board.
+source "$SCRIPT_DIR/board_env.sh"
 
-PYTHON=/root/miniforge3/envs/iotc-tria-xarm/bin/python3
+# Wayland output (HDMI display owned by the GNOME session). Qt (used by
+# cv2.imshow) is told to use its Wayland plugin.
+if ! board_use_display; then
+    echo "WARNING: no desktop session for $(id -un) (/run/user/$(id -u)/wayland-0) —" \
+         "log in on the HDMI display first, or use --headless --web-port 8080." >&2
+fi
 
 # Calibrators have an interactive `input()` safety prompt before dropping
-# servo torque. When launched from a Weston panel icon, there's no tty,
+# servo torque. When launched from a desktop icon, there's no tty,
 # so input() raises EOFError and the script crashes. Detect non-interactive
 # stdin (panel-launched, cron, etc.) and auto-pass --no-prompt — the user at
 # the panel is by definition standing at the board with hand on the arm.
@@ -72,8 +74,8 @@ case "$cmd" in
     exec stdbuf -oL -eL "$PYTHON" -u main.py --mode asl "$@"
     ;;
   shell)
-    # Weston terminal opened in the project dir — handy for panel-launched calibration.
-    exec /usr/bin/weston-terminal --shell=/bin/bash
+    # Terminal opened in the project dir — handy for desktop-launched calibration.
+    exec gnome-terminal --working-directory="$SCRIPT_DIR"
     ;;
   *)
     echo "Usage: $0 {calibrate-ball|calibrate-box|calibrate-offset|teach-pose|ball|pickplace|asl|shell} [args...]" >&2

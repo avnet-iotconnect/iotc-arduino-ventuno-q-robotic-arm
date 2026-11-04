@@ -9,7 +9,7 @@ camera. Scale is arbitrary (good for monotonic gating like "is the ball at
 the taught grab distance?"); use a calibration pass + a known-distance
 reference if you need metric distance.
 
-NPU spike numbers on QCS6490: input ``[1,256,256,3]`` uint8, output
+NPU spike numbers (measured on the Tria QCS6490): input ``[1,256,256,3]`` uint8, output
 ``[1,256,256,1]`` uint8, **~4.7 ms / 210 fps** on Hexagon HTP via the QNN
 delegate. Plays well alongside YOLOv8 (which is ~7 ms on the same NPU); a
 combined per-frame budget of ~12 ms leaves plenty of headroom for the
@@ -31,7 +31,7 @@ import cv2
 import numpy as np
 
 # QNN delegate + fastrpc read these at init. Mirrors detectors/yolo_detector.py.
-os.environ.setdefault("ADSP_LIBRARY_PATH", "/usr/lib/rfsa/adsp")
+os.environ.setdefault("ADSP_LIBRARY_PATH", "/usr/lib/dsp/cdsp")  # VENTUNO Q skel libs
 
 DEFAULT_MODEL = "/etc/models/midas_quantized.tflite"
 QNN_DELEGATE = "/usr/lib/libQnnTFLiteDelegate.so"

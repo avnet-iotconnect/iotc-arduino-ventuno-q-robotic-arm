@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 Avnet
-"""Pluggable NN detectors for the vision modes, all targeting the QCS6490
+"""Pluggable NN detectors for the vision modes, all targeting the IQ-8275
 Hexagon NPU via TFLite + the QNN HTP delegate (with a CPU fallback so the
 same code runs on a dev machine).
 

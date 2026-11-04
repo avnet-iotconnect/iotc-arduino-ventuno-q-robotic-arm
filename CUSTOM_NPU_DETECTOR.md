@@ -1,6 +1,20 @@
 # Custom NPU Ball Detector — End-to-End Reproduction Guide
 
-How to train a custom YOLOv8n ball detector on your own data and run it on the **Tria QCS6490 Hexagon NPU** via TFLite + the QNN delegate, alongside (or replacing) the HSV pipeline. Designed so someone with no prior context can repeat the whole pipeline.
+How to train a custom YOLOv8n ball detector on your own data and run it on the **Hexagon NPU** via TFLite + the QNN delegate, alongside (or replacing) the HSV pipeline. Designed so someone with no prior context can repeat the whole pipeline.
+
+> [!NOTE]
+> **VENTUNO Q branch:** this guide was written on the Tria QCS6490. Training and
+> export are identical; on the board, translate the paths as follows:
+>
+> | Tria (this guide) | Arduino VENTUNO Q |
+> |---|---|
+> | `/root/miniforge3/envs/iotc-tria-xarm/bin/python3` | `~/miniforge3/envs/iotc-ventuno-xarm/bin/python3` (or `source board_env.sh` then `python`) |
+> | `/var/roothome/iotc-tria-vision-ai-kit-robotic-arm/` | `/home/arduino/iotc-tria-vision-ai-kit-robotic-arm/` |
+> | `ADSP_LIBRARY_PATH=/usr/lib/rfsa/adsp` | `ADSP_LIBRARY_PATH=/usr/lib/dsp/cdsp` |
+> | `ssh root@<board>` | `ssh arduino@<board>` (or `adb shell`) |
+>
+> `/usr/lib/libQnnTFLiteDelegate.so` and `/etc/models/` are the same on both
+> (installed by `bootstrap-new-board.sh` on the VENTUNO Q).
 
 The default app already ships an NPU-accelerated COCO detector
 (`/etc/models/yolox_quantized.tflite`) — this guide is for when COCO's `sports ball`

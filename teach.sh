@@ -6,8 +6,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-source /root/miniforge3/etc/profile.d/conda.sh
-conda activate iotc-tria-xarm
+# Python env + NPU runtime paths for this board.
+source "$SCRIPT_DIR/board_env.sh"
 
 LOG="$SCRIPT_DIR/teach.log"
 echo "===== TEACH $(date -u +%FT%TZ) =====" | tee "$LOG"

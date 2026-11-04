@@ -1,11 +1,12 @@
 # Extra dependency for the standalone YOLO pick-place app (yolo_pickplace.py)
-# on the Tria QCS6490 board. Install on top of the base requirements:
-#   /root/miniforge3/envs/iotc-tria-xarm/bin/python3 -m pip install -r requirements-yolo.txt
+# on the Arduino VENTUNO Q. Install on top of the base requirements:
+#   ~/miniforge3/envs/iotc-ventuno-xarm/bin/python3 -m pip install -r requirements-yolo.txt
 #
 # The NPU runtime on this board is TFLite + the QNN HTP delegate. The delegate
-# itself (/usr/lib/libQnnTFLiteDelegate.so) and the model
-# (/etc/models/yolox_quantized.tflite) are already present on the board image —
-# the only Python dependency we add is the TFLite interpreter:
+# (/usr/lib/libQnnTFLiteDelegate.so, apt package qairt-libs) and the models
+# (/etc/models/yolox_quantized.tflite, midas_quantized.tflite) are installed by
+# bootstrap-new-board.sh — the only Python dependency we add is the TFLite
+# interpreter:
 
 ai_edge_litert>=2.1.5
 

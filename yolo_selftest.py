@@ -8,7 +8,7 @@ classes, and prints the top detections (label, confidence, box) plus raw
 dequantized box values so the box layout (xyxy vs xywh) can be confirmed.
 
     ./start_yolo.sh  is for the full app; this is just:
-    ADSP_LIBRARY_PATH=/usr/lib/rfsa/adsp python3 yolo_selftest.py [--camera 2]
+    ADSP_LIBRARY_PATH=/usr/lib/dsp/cdsp python3 yolo_selftest.py [--camera N]
 """
 
 import argparse

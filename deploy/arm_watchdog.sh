@@ -15,10 +15,12 @@
 #
 # Pause the supervisor (e.g. to calibrate over SSH):  touch /tmp/demo_watchdog_off
 # Resume:                                              rm /tmp/demo_watchdog_off
-BASE=/root/iotc-tria-vision-ai-kit-robotic-arm
+# Repo root = parent of this script's deploy/ dir (robotarm.service runs the
+# script in place, as the `arduino` user).
+BASE=$(cd "$(dirname "$0")/.." && pwd)
 LOG=/tmp/watchdog.log
 CONF=0.30          # YOLO confidence used once yolo-pickplace is started; edit to retune per venue
-STARTUP_GRACE=75   # seconds to let start.sh (conda activate takes ~60s on a cold board) bring
+STARTUP_GRACE=75   # seconds to let start.sh (conda activate can take ~60s on a cold board) bring
                    # main.py up before the health check runs — prevents duplicate launches
 
 # Identity of the attached xArm: "<sysfs path>:<devnum>". The devnum changes
@@ -59,14 +61,19 @@ wait_network() {
 launch_idle() {
     wait_network
     cd "$BASE" || return
-    # Render the annotated OpenCV window on the board's HDMI output (Weston /
-    # Wayland) whenever a vision mode runs, alongside the web stream on :8080.
-    # Without these env vars main.py detects no display and forces headless.
-    # Requires the compositor up (init_display.service); harmless if it isn't
-    # (the app just falls back to headless + web).
-    export XDG_RUNTIME_DIR=/dev/socket/weston
-    export WAYLAND_DISPLAY=wayland-1
-    export QT_QPA_PLATFORM=wayland
+    # Render the annotated OpenCV window on the board's HDMI output (the
+    # GNOME / Wayland session of this user, auto-login) whenever a vision mode
+    # runs, alongside the web stream on :8080. Without these env vars main.py
+    # detects no display and forces headless — which is also what happens if
+    # nobody is logged in on HDMI (the app falls back to headless + web).
+    rt="/run/user/$(id -u)"
+    if [ -S "$rt/wayland-0" ]; then
+        export XDG_RUNTIME_DIR="$rt"
+        export WAYLAND_DISPLAY=wayland-0
+        export QT_QPA_PLATFORM=wayland
+    else
+        log "no desktop session at $rt/wayland-0 -> headless (web stream only)"
+    fi
     export LANG=C.UTF-8 LC_ALL=C.UTF-8   # Qt wants a UTF-8 locale
     YOLO_CONF="$CONF" nohup ./start.sh --mode idle --web-port 8080 \
         > /tmp/yolo.log 2>&1 < /dev/null &
