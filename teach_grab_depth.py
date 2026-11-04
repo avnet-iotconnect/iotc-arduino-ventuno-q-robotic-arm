@@ -72,7 +72,7 @@ def parse_args():
                     else "/etc/models/yolox_quantized.tflite",
                     help="YOLO model used to find the ball during teach")
     ap.add_argument("--conf", type=float, default=None,
-                    help="confidence threshold (auto: 0.25 yolox, 0.7 custom)")
+                    help="confidence threshold (auto: 0.25 yolox, else $YOLO_CONF or 0.30 to match pickplace)")
     ap.add_argument("--depth-model", default="/etc/models/midas_quantized.tflite")
     ap.add_argument("--cpu", action="store_true",
                     help="force CPU TFLite for both detectors (skip Hexagon HTP)")
@@ -94,7 +94,7 @@ def main():
         args.camera = cam_settings.find_brio_index(fallback=2)
         print(f"[teach-grab] --camera not specified -> auto-detected /dev/video{args.camera}")
     if args.conf is None:
-        args.conf = 0.25 if "yolox" in os.path.basename(args.model).lower() else 0.7
+        args.conf = 0.25 if "yolox" in os.path.basename(args.model).lower() else float(os.environ.get("YOLO_CONF", 0.30))
 
     print("[teach-grab] connecting to arm...")
     arm = xarm.Controller("USB")

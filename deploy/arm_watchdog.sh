@@ -17,11 +17,22 @@
 # Resume:                                              rm /tmp/demo_watchdog_off
 BASE=/root/iotc-tria-vision-ai-kit-robotic-arm
 LOG=/tmp/watchdog.log
-CONF=0.75          # YOLO confidence used once yolo-pickplace is started; edit to retune per venue
+CONF=0.30          # YOLO confidence used once yolo-pickplace is started; edit to retune per venue
 STARTUP_GRACE=75   # seconds to let start.sh (conda activate takes ~60s on a cold board) bring
                    # main.py up before the health check runs — prevents duplicate launches
 
-arm_present() { lsusb | grep -q 0483:5750; }
+# Identity of the attached xArm: "<sysfs path>:<devnum>". The devnum changes
+# every time the arm re-enumerates — even a 1 s USB drop the 5 s poll would
+# otherwise miss — and a running main.py is then holding a dead handle to the
+# old device, so a change here must trigger a relaunch. Empty = no arm.
+arm_id() {
+    for d in /sys/bus/usb/devices/*; do
+        [ "$(cat "$d/idVendor" 2>/dev/null)" = 0483 ] || continue
+        [ "$(cat "$d/idProduct" 2>/dev/null)" = 5750 ] || continue
+        echo "$(basename "$d"):$(cat "$d/devnum" 2>/dev/null)"
+        return
+    done
+}
 demo_running() { pgrep -f 'python -u main.py' >/dev/null; }
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
 
@@ -62,17 +73,19 @@ launch_idle() {
     log "launched app in IDLE (HDMI + web; send set_mode to start movement)"
 }
 
-was_present=0
+launched_for=""   # arm_id the running app was launched against ("" = none)
 dead_since=0
 log "supervisor started (idle-launch, CONF=$CONF)"
 while true; do
     if [ -f /tmp/demo_watchdog_off ]; then sleep 10; continue; fi
-    if arm_present; then
-        if [ "$was_present" = 0 ]; then
-            log "arm present (boot or replug) -> (re)launching in idle"
+    arm=$(arm_id)
+    if [ -n "$arm" ]; then
+        if [ "$arm" != "$launched_for" ]; then
+            log "arm present as $arm (boot, replug or USB re-enumeration) -> (re)launching in idle"
             pkill -f 'python -u main.py'; sleep 3
             pkill -9 -f 'python -u main.py' 2>/dev/null; sleep 1
             launch_idle
+            launched_for=$arm
             sleep "$STARTUP_GRACE"
         elif ! demo_running; then
             now=$(date +%s)
@@ -86,9 +99,8 @@ while true; do
         else
             dead_since=0
         fi
-        was_present=1
     else
-        was_present=0
+        launched_for=""
         dead_since=0
     fi
     sleep 5

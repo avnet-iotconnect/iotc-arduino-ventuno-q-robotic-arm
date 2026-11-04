@@ -735,6 +735,27 @@
             "isOTACommand": false
         },
         {
+            "name": "camera_preset",
+            "command": "camera_preset",
+            "requiredParam": true,
+            "requiredAck": true,
+            "isOTACommand": false
+        },
+        {
+            "name": "camera_preset_save",
+            "command": "camera_preset_save",
+            "requiredParam": true,
+            "requiredAck": true,
+            "isOTACommand": false
+        },
+        {
+            "name": "camera_presets_show",
+            "command": "camera_presets_show",
+            "requiredParam": false,
+            "requiredAck": true,
+            "isOTACommand": false
+        },
+        {
             "name": "camera_setting",
             "command": "camera_setting",
             "requiredParam": true,

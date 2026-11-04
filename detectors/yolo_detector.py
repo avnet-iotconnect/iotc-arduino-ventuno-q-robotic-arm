@@ -136,7 +136,15 @@ class YoloDetector:
 
         inp = self.interp.get_input_details()[0]
         self.in_index = inp["index"]
-        self.in_h, self.in_w = int(inp["shape"][1]), int(inp["shape"][2])
+        _shp = list(inp["shape"])
+        # TFLite is normally NHWC [1,H,W,3]; the newer ultralytics LiteRT/torch
+        # exporter emits NCHW [1,3,H,W]. Detect which layout this model uses.
+        if len(_shp) == 4 and int(_shp[1]) == 3 and int(_shp[3]) != 3:
+            self.in_nchw = True
+            self.in_h, self.in_w = int(_shp[2]), int(_shp[3])
+        else:
+            self.in_nchw = False
+            self.in_h, self.in_w = int(_shp[1]), int(_shp[2])
         self.in_dtype = inp["dtype"]
         self.in_quant = inp["quantization"]  # (scale, zero) for int8/uint8 input
 
@@ -219,6 +227,8 @@ class YoloDetector:
             info = np.iinfo(self.in_dtype)
             blob = np.clip(q, info.min, info.max).astype(self.in_dtype)[None]
 
+        if getattr(self, "in_nchw", False):
+            blob = np.ascontiguousarray(np.transpose(blob, (0, 3, 1, 2)))
         self.interp.set_tensor(self.in_index, blob)
         with self._silence():
             self.interp.invoke()

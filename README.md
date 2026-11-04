@@ -504,7 +504,7 @@ SCAN every time the ball flickers off for a frame.
 |----------|---------|-------|
 | `PAN_GAIN`, `TILT_GAIN` | — | Servo units commanded per pixel of error. `TILT_GAIN` is higher because wrist_flex fights gravity at extended poses. |
 | `PAN_DIR`, `TILT_DIR` | — | Sign flips. Determined by live test — flip from `+1` to `-1` if the arm moves away from the ball instead of toward it. |
-| `MIN_TRIM_STEP` | 3 | Floor on non-zero P-controller commands. Bus servos silently ignore commands below ~5 units (static friction). |
+| `MIN_TRIM_STEP` | 14 | Floor on non-zero wrist_flex trims. Bus servos silently ignore small commands (static friction); with the camera + gripper loading the wrist, 8 units didn't move it at all. |
 | `MIN_TRIM_STEP_PAN` | 18 | Higher floor for shoulder_pan — it carries the entire forearm + wrist + camera, so its static-friction floor is roughly 2× the wrist's. |
 | `APPROACH_STEP` | 0 | Per-frame shoulder_lift step during descent. Disabled in table-mount build — the grab snap handles height directly. |
 | `MAX_STEP` | 25 | Hard cap on any single-frame servo delta — keeps a large pixel error from snapping the arm. |
@@ -727,10 +727,15 @@ These commands work via /IOTCONNECT regardless of which demo is running:
 | `set_mode mode=<name>` | Switch active demo without restarting (`asl`, `ball`, `pickplace`, `yolo-ball`, `yolo-pickplace`) |
 | `set_mode mode=idle` | Stop the running demo; arm + cloud stay connected |
 | `calibrate target=<name>` | Launch a browser-UI calibrator (`ball`, `box`, `offset`, `grab_depth`) — open `http://<board-ip>:8000/` |
+| `calibrate grab_depth <D>` | Set the YOLO grab-gate depth floor D directly (e.g. `calibrate grab_depth 650`) — applied live, persisted to `grab_threshold.json`. `calibrate grab_depth show` reads it back. Same via `calibrate_grab_depth <D>`. |
 | `release_torque` | Drop all servo torques for hand-posing |
 | `hold_pose` | Re-engage torque at the current pose |
 | `teach_scan_pose name=<n>` | Snapshot current arm pose into a named scan slot |
 | `camera_setting <name> <value>` | Update a camera setting live (exposure, saturation, etc.) |
+| `camera_settings_show` / `camera_settings_reset` | Show the current camera settings / wipe them back to camera defaults |
+| `camera_preset <name>` | Apply a whole camera preset live: `normal`, `bright`, `dim`, `vivid`, `warm`, `cool`, `auto` (or one you saved) |
+| `camera_preset_save <name>` | Save the current camera settings as a named preset (tune with `camera_setting`, then keep it as a button) |
+| `camera_presets_show` | List all presets and their values |
 
 ---
 

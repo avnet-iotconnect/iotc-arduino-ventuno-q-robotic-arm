@@ -38,11 +38,11 @@ ELBOW_REACH_RATIO = 0.6    # elbow_flex contribution per unit of shoulder_lift d
 TILT_ELBOW_RATIO = 0.0     # disabled 2026-04-19 — telemetry showed elbow_flex draining to floor (clamp=0) because tilt's negative contribution outweighed approach's positive one over many frames; once elbow saturates the assist is wasted anyway. Wrist alone handles tilt with the wider CENTER_DEADBAND_PX
 TILT_ELBOW_DIR = 1         # flip to -1 if elbow moves wrong way for tilt
 MAX_STEP = 25              # cap on any single-update servo delta — raised so larger errors actually translate to a visible move; the bus servo has plenty of torque headroom for 25-unit steps
-MIN_TRIM_STEP = 8          # any non-zero trim is bumped to at least this magnitude — bus servos ignore <5-unit commands (static friction), so a 3-unit "trim" is a no-op and tilt_err sits forever just outside CENTER_DEADBAND_PX without ever converging. Tuned for wrist_flex.
+MIN_TRIM_STEP = 14         # any non-zero trim is bumped to at least this magnitude — bus servos ignore small commands (static friction), so a 3-unit "trim" is a no-op and tilt_err sits forever just outside CENTER_DEADBAND_PX without ever converging. Tuned for wrist_flex (the only joint using this default). Raised 8 -> 14 on 2026-09-10: with the camera+gripper hanging off the wrist at flex ~870, an 8-unit command didn't move it at all — telemetry showed wrist_flex 867/868 for a minute while the controller sent dtilt=-8 every frame at tilt_err 77 px, so descent (gated on APPROACH_DEADBAND_PX) never started. 14 units ≈ 100 px at ~7 px/unit: a 77 px error lands ~20 px inside the deadband, and it's still below the 18-unit pan floor that oscillates.
 MIN_TRIM_STEP_PAN = 18     # shoulder_pan carries the whole forearm + wrist + camera, so its static friction is much higher than wrist_flex — 8-unit commands stall in extended poses (shoulder_lift>600). Verified 2026-04-19 with telemetry showing pan stuck at 552-553 while controller commanded +8 every frame.
 MOVE_DURATION_MS = 220     # per-step move duration; raised so small servo commands actually move (under 150ms many bus servos ignore sub-5-unit deltas)
 CENTER_DEADBAND_PX = 60    # widened 2026-04-19 from 25 — must be >= MIN_TRIM_STEP_PAN × pixels-per-servo-unit (~7 px/unit measured), otherwise a single floored pan command (18 units = ~126 px of ball motion) flings the ball clear past the deadband and the controller oscillates +18, -18, +18 forever. Trade-off: GRAB now fires at up to 60 px off-target, but the gripper jaw is wider than that
-APPROACH_DEADBAND_PX = 60  # 2026-05-02 reverted from a brief 120 experiment. On this Tria + downward-pointing-Brio geometry, descent (shoulder_lift extending forward) moves the ball further past the camera frame ("behind" the arm) — descent reframing fights wrist trim, ball escapes downward, controller cycles SCANNING → TRACKING → SCANNING. Keeping descent gated by tight 60 means: center first (slow when wrist friction-stalls just outside 60), then descend; if you see "stuck at dy~67 forever," the fix is to lower MIN_TRIM_STEP / raise TILT_GAIN so wrist breaks friction sooner — NOT to widen this deadband.
+APPROACH_DEADBAND_PX = 60  # 2026-05-02 reverted from a brief 120 experiment. On this Tria + downward-pointing-Brio geometry, descent (shoulder_lift extending forward) moves the ball further past the camera frame ("behind" the arm) — descent reframing fights wrist trim, ball escapes downward, controller cycles SCANNING → TRACKING → SCANNING. Keeping descent gated by tight 60 means: center first (slow when wrist friction-stalls just outside 60), then descend; if you see "stuck at dy~67 forever" with wrist_flex not moving, the fix is to RAISE MIN_TRIM_STEP (done 8 -> 14 on 2026-09-10) so the wrist actually breaks friction — NOT to widen this deadband.
 TARGET_RADIUS_PX = 220     # ball "close enough" radius in pixels (lowered to match what we actually observe at grab distance for the current ball)
 RADIUS_TOLERANCE = 40      # +/- around TARGET_RADIUS_PX considered "at distance"
 MIN_CONTOUR_AREA = 200     # ignore tiny mask blobs (noise)
@@ -77,10 +77,16 @@ POS_BUFFER_LEN = 5               # how many recent ball positions we keep for ve
 MIN_VELOCITY_PX_PER_FRAME = 2.0  # velocity below this = don't bother predicting
 MAX_PREDICT_FRAMES = 15          # cap predictions so the arm doesn't run away on a bad estimate
 TELEMETRY_INTERVAL_S = 5.0       # how often we publish ball telemetry to /IOTCONNECT — matches device template dataFrequency
-GRIPPER_CLOSE_TARGET = 650  # commanded close position; actual may stall below this on large objects
+GRIPPER_CLOSE_TARGET = 1000  # commanded close position; actual may stall below this on large objects
 GRIPPER_STALL_SLACK = 10    # if actual < target - this, assume stalled against object
-GRIPPER_RELAX_OFFSET = 5    # back off this many units from the stall point to release torque
 GRIPPER_RELEASE_DELTA = 40  # if current pos < hold_target - this, user opened the gripper
+GRIPPER_CLOSE_MS = 250          # close ramp; short so the servo is already at full torque when it meets the ball
+GRIPPER_SETTLE_TIMEOUT_S = 3.0  # max extra time to wait for the jaws to stop moving (they creep for ~2 s on the ball)
+GRIPPER_SETTLE_DELTA = 3        # consecutive reads this close together = jaws stopped
+GRIPPER_SETTLE_READS = 3        # how many agreeing reads (100 ms apart) before we call the jaws stopped
+GRIPPER_SETTLE_DWELL_S = 0.5    # let the servo build full torque on the ball before lifting
+GRIPPER_EMPTY_POS = 900         # jaws at/after this after the lift = nothing in them (a ball holds them well below)
+GRIPPER_TRACK_POS = 250         # jaw opening while tracking (matches the scan poses)
 
 # --- arm conventions (from main.execute_arm_action) ---
 SERVO_GRIPPER = 1
@@ -360,8 +366,7 @@ class BallFollowMode(Mode):
         if not is_prediction and centered_ok and radius_ok:
             self.state = "GRABBING"
             self._log("GRAB: centered and at distance — closing gripper")
-            self._do_grab(arm)
-            self.state = "HOLDING"
+            self.state = "HOLDING" if self._do_grab(arm) else "TRACKING"
             try:
                 send_telemetry(arm, extras={"ballTrack": self.telemetry()}, positions=pos)
                 self.last_telemetry_at = time.time()
@@ -492,26 +497,86 @@ class BallFollowMode(Mode):
         return best
 
     def _do_grab(self, arm):
-        # Open fully, close on the ball, detect stall + relax, then lift and
-        # return home. Home pose deliberately excludes the gripper so the ball
-        # isn't dropped.
-        arm.setPosition(SERVO_GRIPPER, 60, duration=500, wait=True)
-        arm.setPosition(SERVO_GRIPPER, GRIPPER_CLOSE_TARGET, duration=700, wait=True)
+        """Open fully, close on the ball, wait for the jaws to stop, lift and
+        return home. Home pose deliberately excludes the gripper so the ball
+        isn't dropped.
 
-        actual = arm.getPosition(SERVO_GRIPPER)
-        if actual < GRIPPER_CLOSE_TARGET - GRIPPER_STALL_SLACK:
-            relaxed = actual + GRIPPER_RELAX_OFFSET
-            print(f"[ball] gripper stalled at {actual} (target {GRIPPER_CLOSE_TARGET}); relaxing to {relaxed}")
-            arm.setPosition(SERVO_GRIPPER, relaxed, duration=200, wait=True)
-            self.hold_target = relaxed
-        else:
-            self.hold_target = GRIPPER_CLOSE_TARGET
+        Returns True if we are holding the ball after the lift. If the jaws
+        closed on nothing, or are (nearly) shut after the lift (ball slipped
+        out), the gripper is re-opened, hold_target stays None and False is
+        returned so the caller goes back to tracking instead of carrying an
+        empty gripper to the box.
+        """
+        arm.setPosition(SERVO_GRIPPER, 0, duration=500, wait=True)
+        arm.setPosition(SERVO_GRIPPER, GRIPPER_CLOSE_TARGET, duration=GRIPPER_CLOSE_MS, wait=True)
+
+        # wait=True only sleeps for the commanded duration; closing on the
+        # ball the servo runs slower than that, so poll until the jaws have
+        # actually stopped before deciding where they stalled and lifting.
+        actual = self._wait_gripper_settled(arm)
+        if actual >= GRIPPER_CLOSE_TARGET - GRIPPER_STALL_SLACK:
+            print(f"[ball] gripper closed to {actual} — nothing in the jaws; back to tracking")
+            arm.setPosition(SERVO_GRIPPER, GRIPPER_TRACK_POS, duration=300, wait=True)
+            return False
+
+        # Stalled on the ball. Leave the servo commanded at full close so it
+        # keeps pushing at maximum torque for the whole carry. Sending a new
+        # "relaxed" target here makes the servo re-interpolate from where it
+        # currently sits, which momentarily unloads the jaws and lets the
+        # ball shift. hold_target is where the jaws actually stopped — the
+        # release check compares the live position to it.
+        print(f"[ball] gripper stalled at {actual} (target {GRIPPER_CLOSE_TARGET}); holding at full close")
+        self.hold_target = actual
 
         arm.setPosition([
             [SERVO_SHOULDER_LIFT, 300],
             [SERVO_ELBOW_FLEX, 350],
         ], duration=1500, wait=True)
+
+        # If the ball squirted out on the way up the jaws will have snapped
+        # (nearly) shut. Catch that here rather than transporting an empty
+        # gripper. The threshold is absolute: the jaws keep creeping closed
+        # on a held ball for a couple of seconds, so "closed further than the
+        # stall" is normal and does NOT mean the ball is gone.
+        try:
+            after = int(arm.getPosition(SERVO_GRIPPER))
+        except Exception as e:
+            print(f"[ball] gripper read after lift failed: {e}")
+            after = actual
+        if after >= GRIPPER_EMPTY_POS:
+            print(f"[ball] ball slipped during lift: gripper {actual} -> {after}; back to tracking")
+            self.hold_target = None
+            arm.setPosition(SERVO_GRIPPER, GRIPPER_TRACK_POS, duration=300, wait=True)
+            return False
+        print(f"[ball] lifted; gripper {actual} -> {after}")
+
         arm.setPosition(HOME_POSE_KEEP_GRIP, duration=1800, wait=True)
+        return True
+
+    def _wait_gripper_settled(self, arm):
+        """Poll the gripper until GRIPPER_SETTLE_READS consecutive reads agree
+        (jaws stopped — stalled on the ball or fully closed), then dwell so
+        the servo is at full torque. Returns the final position. A read
+        failure ends the wait early with the last value we got."""
+        trace = [int(arm.getPosition(SERVO_GRIPPER))]
+        deadline = time.time() + GRIPPER_SETTLE_TIMEOUT_S
+        stable = 0
+        while time.time() < deadline:
+            time.sleep(0.1)
+            try:
+                cur = int(arm.getPosition(SERVO_GRIPPER))
+            except Exception as e:
+                print(f"[ball] gripper read failed while settling: {e}")
+                break
+            stable = stable + 1 if abs(cur - trace[-1]) <= GRIPPER_SETTLE_DELTA else 0
+            trace.append(cur)
+            if stable >= GRIPPER_SETTLE_READS - 1:
+                break
+        else:
+            print(f"[ball] gripper still moving after {GRIPPER_SETTLE_TIMEOUT_S}s")
+        print(f"[ball] gripper settle trace: {' '.join(map(str, trace))}")
+        time.sleep(GRIPPER_SETTLE_DWELL_S)
+        return trace[-1]
 
     def _maybe_predict(self):
         """Return a (bx, by, br) tuple extrapolated from recent motion, or None.

@@ -32,6 +32,7 @@ box_pose.json
 drop_pose.json
 scan_poses.json
 camera_settings.json
+camera_presets.json
 cam_gripper_offset.json
 grab_depth.json
 grab_threshold.json

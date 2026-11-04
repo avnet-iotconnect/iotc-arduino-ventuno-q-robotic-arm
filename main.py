@@ -358,6 +358,41 @@ def _extract_arg(command_args, *keys):
     return None
 
 
+def _extract_second_arg(command_args, first, *keys):
+    """Value that follows the target word in a two-word command, e.g.
+    `calibrate grab_depth 650` → "650". Positional: element [1]. Dict: the
+    first of `keys` present whose value isn't the target word itself (so
+    {"value": "grab_depth"} doesn't get read back as the value). None if absent."""
+    if isinstance(command_args, (list, tuple)):
+        if len(command_args) > 1 and command_args[1] is not None:
+            return str(command_args[1]).strip().lower()
+        return None
+    if isinstance(command_args, dict):
+        for k in keys:
+            v = command_args.get(k)
+            if v is not None and str(v).strip().lower() != first:
+                return str(v).strip().lower()
+    return None
+
+
+def _set_grab_depth_from_command(value):
+    """`calibrate grab_depth <D>` / `calibrate_grab_depth <D>` with a value:
+    set the grab-gate depth floor D directly (live + persisted through
+    grab_threshold_store), `show` reports it. Lets a template that only has
+    the calibrate buttons change D without a set_grab_threshold command.
+    Returns (ack_status, ack_message)."""
+    if value == 'show':
+        return C2dAck.CMD_SUCCESS_WITH_ACK, f"grab gate: {grab_threshold_store.describe()}"
+    try:
+        v = grab_threshold_store.set_value(value)
+    except (TypeError, ValueError) as e:
+        return C2dAck.CMD_FAILED, (f"grab_depth: invalid value '{value}': {e}. "
+                                   "Send a number to set D, 'show' to read it, "
+                                   "or no value to open the teach UI.")
+    return C2dAck.CMD_SUCCESS_WITH_ACK, (f"grab gate now D >= {v:g} (applied live, persisted) "
+                                         f"— {grab_threshold_store.describe()}")
+
+
 def iotc_on_command(msg):
     print(f"Received IoTConnect command: {msg.command_name} args={msg.command_args} ack_id={msg.ack_id}")
     with command_queue_lock:
@@ -586,10 +621,16 @@ def process_iotconnect_commands(arm):
                                    f"Valid: {sorted(VISION_MODE_NAMES)} or 'idle'")
             elif command_name == 'calibrate':
                 target = _extract_arg(command_args, 'target', 'mode', 'value', 'name')
+                # `calibrate grab_depth 650` sets D directly instead of
+                # launching the teach UI (see _set_grab_depth_from_command).
+                depth_value = (_extract_second_arg(command_args, target, 'd', 'threshold', 'value')
+                               if target == 'grab_depth' else None)
                 if target is None:
                     ack_status = C2dAck.CMD_FAILED
                     ack_message = (f"calibrate: missing 'target' argument. "
                                    f"Valid: {sorted(CALIBRATION_TARGETS)}")
+                elif depth_value is not None:
+                    ack_status, ack_message = _set_grab_depth_from_command(depth_value)
                 elif target in CALIBRATION_TARGETS:
                     argv = _build_calibrator_argv(f'calibrate_{target}', _runtime_camera_index)
                     set_pending_action(('run_subprocess', argv, f'calibrate_{target}'))
@@ -606,8 +647,13 @@ def process_iotconnect_commands(arm):
                 set_pending_action(('switch_mode', new_mode))
                 ack_message = f"Will switch to mode: {new_mode}"
             elif command_name in CALIBRATOR_COMMAND_NAMES:
+                # `calibrate_grab_depth 650` — same D shortcut as `calibrate grab_depth 650`.
+                depth_value = (_extract_arg(command_args, 'd', 'threshold', 'value')
+                               if command_name == 'calibrate_grab_depth' else None)
                 argv = _build_calibrator_argv(command_name, _runtime_camera_index)
-                if argv is None:
+                if depth_value is not None:
+                    ack_status, ack_message = _set_grab_depth_from_command(depth_value)
+                elif argv is None:
                     ack_status = C2dAck.CMD_FAILED
                     ack_message = f"Unknown calibrator: {command_name}"
                 else:
@@ -715,10 +761,23 @@ def process_iotconnect_commands(arm):
                 # Updates camera_settings.json AND signals the live capture thread
                 # to re-apply on the fly — no mode restart needed.
                 name, value = _extract_pair(command_args)
-                if name not in cam_settings.SETTING_PROPS:
+                # A single word that names a preset (`camera_setting vivid`)
+                # is treated as camera_preset, so preset buttons wired to this
+                # command still work.
+                preset = None
+                if name is None or value is None:
+                    cand = _extract_arg(command_args, 'name', 'preset', 'value')
+                    if cand in cam_settings.preset_names():
+                        preset = cand
+                if preset is not None:
+                    settings = cam_settings.apply_preset(preset)
+                    cam_settings.mark_dirty()
+                    ack_message = f"camera_preset '{preset}' applied: {json.dumps(settings)}"
+                elif name not in cam_settings.SETTING_PROPS:
                     ack_status = C2dAck.CMD_FAILED
                     ack_message = (f"camera_setting: unknown name '{name}'. "
-                                   f"Valid: {cam_settings.known_setting_names()}")
+                                   f"Valid: {cam_settings.known_setting_names()} "
+                                   f"or a preset: {cam_settings.preset_names()}")
                 else:
                     try:
                         casted = cam_settings.SETTING_PROPS[name][1](value)
@@ -776,6 +835,31 @@ def process_iotconnect_commands(arm):
                 ack_message = ("camera_settings reset to empty — camera will use V4L2 defaults "
                                "on next mode/calibrator start (live capture stays at last applied "
                                "values until reopened)")
+            elif command_name == 'camera_preset':
+                # `camera_preset NAME` (positional) or {"name": NAME}. Replaces
+                # camera_settings.json with the whole preset and re-applies live.
+                name = _extract_arg(command_args, 'name', 'preset', 'value')
+                settings = cam_settings.apply_preset(name)
+                if settings is None:
+                    ack_status = C2dAck.CMD_FAILED
+                    ack_message = (f"camera_preset: unknown preset '{name}'. "
+                                   f"Valid: {cam_settings.preset_names()}")
+                else:
+                    cam_settings.mark_dirty()  # capture thread re-applies on next iteration
+                    ack_message = f"camera_preset '{name}' applied: {json.dumps(settings)}"
+            elif command_name == 'camera_preset_save':
+                # `camera_preset_save NAME` — snapshot the current settings into
+                # camera_presets.json so a tuned picture becomes a one-press button.
+                name = _extract_arg(command_args, 'name', 'preset', 'value')
+                settings = cam_settings.save_preset(name)
+                if settings is None:
+                    ack_status = C2dAck.CMD_FAILED
+                    ack_message = (f"camera_preset_save: nothing saved for '{name}' — name must be "
+                                   "letters/digits/_/- and camera_settings.json must not be empty")
+                else:
+                    ack_message = f"camera_preset '{name}' saved: {json.dumps(settings)}"
+            elif command_name == 'camera_presets_show':
+                ack_message = f"camera_presets: {json.dumps(cam_settings.load_presets())}"
             else:
                 action_name = IOTC_COMMAND_TO_ACTION.get(command_name)
                 if action_name is None:
@@ -1410,7 +1494,8 @@ def parse_args():
                              "JSON object mapping setting name → value. "
                              f"Valid names: {cam_settings.known_setting_names()}. "
                              "Cloud commands camera_setting/camera_settings_show/camera_settings_reset "
-                             "edit this file at runtime.")
+                             "edit this file at runtime; camera_preset NAME replaces it with a preset "
+                             f"({cam_settings.preset_names()}).")
     parser.add_argument('--webrtc', action='store_true',
                         help="Enable KVS WebRTC video streaming (requires robarmwebrtc device template)")
     return parser.parse_args()
