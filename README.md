@@ -491,10 +491,10 @@ python3 ball_calibrate.py --output box_color.json [--camera N]
 Same UI as ball-color calibration. Click on the drop box in the live preview.
 The pickplace mode reads `box_color.json` to find and approach the drop target.
 
-#### 2d. Camera-Gripper Calibration — `calibrate_offset` (View Pose + Grab Reach)
+#### 2d. Camera-Gripper Calibration — `calibrate_offset` (View Pose + Grab Reach + Grab Depth)
 
-Every camera mount is a little different, so this teaches the arm two things
-for **your** camera position:
+Every camera mount is a little different, so this one calibration teaches the
+arm everything about **your** camera position:
 
 - **View pose** — where tracking should stop: the gripper just above/behind
   the ball with the ball fully in view. Saves where the ball sits in the image
@@ -503,15 +503,18 @@ for **your** camera position:
   where the open jaws are around the ball. Use it when the camera **can't see
   the ball once it is between the jaws**: the arm stops at the view pose,
   makes this move without the camera, then closes the gripper.
+- **Grab depth** (YOLO demo) — how close the depth model says the ball is at
+  the view pose; sets the YOLO grab threshold. Taught automatically by the
+  view-pose snapshot when the YOLO models are installed.
 
-Send `calibrate_offset` from the /IOTCONNECT dashboard (or run
+Needs `ball_color.json` from step 2a first. Send `calibrate_offset` from the /IOTCONNECT dashboard (or run
 `./calibrate_offset.sh` with the demo stopped), then open
 `http://<board-ip>:8000/`:
 
 1. **Support the arm** — torque drops when the calibrator starts.
 2. Place the ball on the table. Pose the arm at the **view pose**: gripper just
-   above/behind the ball, ball fully in the camera view (green circle). Hold
-   steady and click **1. Snapshot view pose**.
+   above/behind the ball, ball fully in the camera view (green circle). Keep
+   holding the arm (torque off) and click **1. Snapshot view pose**.
 3. **Without moving the ball**, move the arm so the open jaws are around it, at
    the height they should close. The camera doesn't need to see the ball. Click
    **2. Snapshot grab pose**.
@@ -645,8 +648,8 @@ values stream to /IOTCONNECT as telemetry.
 **Best for:** showing the IQ-8275 Hexagon NPU doing real, useful AI work that the
 CPU-only demo can't — with side-by-side comparison via demo #2.
 
-**Trade-off:** requires a per-site **D_grab teach** (MiDaS depth values are
-scene-specific). Also requires a captured + labelled dataset and one-time INT8
+**Trade-off:** the grab depth must be re-taught at each new site (MiDaS depth
+values are scene-specific) — part of `calibrate_offset`. Also requires a captured + labelled dataset and one-time INT8
 TFLite conversion for a custom YOLO model (see
 [`CUSTOM_NPU_DETECTOR.md`](CUSTOM_NPU_DETECTOR.md)).
 
@@ -658,56 +661,20 @@ site-dependent.
 
 | File | Required? | Command |
 |------|-----------|---------|
-| `grab_depth.json` | **Required at every new site** | `calibrate_offset` step 1 (cloud), or depth alone: `calibrate grab_depth` (cloud) |
+| `grab_depth.json` (+ `cam_gripper_offset.json`) | **Required at every new site** | `calibrate_offset` (cloud), both steps |
 | `drop_pose.json` | Only if drop target moved | Send `release_torque`, hand-pose arm, then `hold_pose` + `teach_drop_pose` from cloud |
 | `scan_poses.json` | Only if ball staging area moved | `python3 teach_pose.py` |
 | `box_color.json` | Only if drop box or lighting changed | `python3 ball_calibrate.py --output box_color.json --camera N` |
 | `camera_settings.json` | Only if lighting is very different | Re-run the exposure/WB lock script |
 
-#### Re-Teaching D_grab (Required at Every New Site)
+#### Re-Teaching at a New Site
 
-MiDaS depth values are scene-specific — the same physical grab pose can read
-100+ units differently across lighting conditions and camera enumerations.
-
-`calibrate_offset` step 1 already teaches this. To re-teach **only** the depth
-(e.g. new room, same arm), send `calibrate grab_depth` from the dashboard and
-use the page at `http://<board-ip>:8000/`, or run the steps below by hand.
-Either way the snapshot saves `grab_depth.json` **and sets the grab gate's
-depth threshold** to the taught depth minus a noise margin. Check it with
-`calibrate grab_depth show`; override it with `calibrate grab_depth <D>`.
-
-1. Stop any running demo:
-   ```bash
-   pkill -f yolo_pickplace.py
-   ```
-
-2. Run the teach helper:
-   ```bash
-   ./teach_grab.sh --model model/ball_best.tflite --camera N --web-port 8080
-   ```
-
-3. Open `http://<board-ip>:8080/` in a browser to see the wrist camera.
-
-4. **Hold the arm by hand**, press Enter → torque releases. The arm will fall
-   under gravity if you let go.
-
-5. Hand-pose the gripper exactly where you want it at the grab moment. The ball
-   should sit just below the gripper jaws and be fully visible to the camera.
-   If you taught a grab reach in `calibrate_offset`, pose the arm at the
-   **view pose** instead — the ball fully in view, where tracking stops.
-
-6. **While still holding the arm**, press `s` + Enter. Captures 20 frames and
-   saves the median D as `grab_depth.json`. (The script refuses to save if you
-   press `h` first — a locked-arm capture has zero stdev and is useless.)
-
-7. `h` + Enter to lock the pose, then `q` + Enter to quit cleanly.
-
-Sanity check:
-```bash
-cat grab_depth.json
-```
-`D_stdev` should be roughly 10–30, **not 0**. If it's 0, redo the snapshot
-before pressing `h`.
+MiDaS depth values are scene-specific — the same pose can read 100+ units
+differently in a different room or light. At a new site, redo
+`calibrate_offset` (both steps, see [2d](#2d-camera-gripper-calibration--calibrate_offset-view-pose--grab-reach--grab-depth)):
+the step 1 snapshot re-teaches the grab depth and resets the grab threshold.
+Check the result with `calibrate grab_depth show`; override the threshold by
+hand with `calibrate grab_depth <D>`.
 
 ### Running the Demo
 
@@ -805,7 +772,7 @@ These commands work via /IOTCONNECT regardless of which demo is running:
 | `up` / `down` | Move arm vertically |
 | `set_mode mode=<name>` | Switch active demo without restarting (`asl`, `ball`, `pickplace`, `yolo-ball`, `yolo-pickplace`) |
 | `set_mode mode=idle` | Stop the running demo; arm + cloud stay connected |
-| `calibrate target=<name>` | Launch a browser-UI calibrator (`ball`, `box`, `offset`, `grab_depth`) — open `http://<board-ip>:8000/` |
+| `calibrate target=<name>` | Launch a browser-UI calibrator (`ball`, `box`, `offset`) — open `http://<board-ip>:8000/`. `grab_depth` opens the same calibrator as `offset` (grab depth is taught by its step 1). |
 | `calibrate grab_depth <D>` | Set the YOLO grab-gate depth floor D directly (e.g. `calibrate grab_depth 650`) — applied live, persisted to `grab_threshold.json`. `calibrate grab_depth show` reads it back. Same via `calibrate_grab_depth <D>`. |
 | `release_torque` | Drop all servo torques for hand-posing |
 | `hold_pose` | Re-engage torque at the current pose |

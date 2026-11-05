@@ -37,7 +37,7 @@
 #   3. Calibrate. None of these can be automated; they need eyes on the arm:
 #        - calibrate_ball                  (cloud cmd; click ball in browser)
 #        - calibrate_box                   (cloud cmd; click box in browser)
-#        - calibrate_offset                (cloud cmd; pose gripper over ball, snapshot)
+#        - calibrate_offset                (cloud cmd; view pose snapshot, then grab pose snapshot)
 #        - teach_scan_pose center/left/right (cloud cmd; release_torque, hand-pose, hold_pose, capture)
 #        - teach_drop_pose                 (cloud cmd; pose gripper above box, snapshot)
 #
@@ -291,7 +291,7 @@ echo
 echo "  7. From the IoTConnect dashboard, run calibrations in this order:"
 echo "       calibrate_ball       (clicks open browser at http://<board-ip>:8000)"
 echo "       calibrate_box"
-echo "       calibrate_offset"
+echo "       calibrate_offset     (view pose, then grab pose — also teaches YOLO grab depth)"
 echo "       teach_scan_pose name=center  (release_torque -> hand-pose -> hold_pose -> teach)"
 echo "       teach_scan_pose name=left"
 echo "       teach_scan_pose name=right"

@@ -31,7 +31,7 @@ from . import ball_follow as bf
 from .ball_follow import BallFollowMode
 from .pickplace import PickPlaceMode
 
-# Persisted output of teach_grab_depth.py. When the depth detector is enabled
+# Persisted output of the calibrate_offset view-pose snapshot. When the depth detector is enabled
 # AND this file exists, the ball-follow mode switches its descent + grab gate
 # from pixel-radius (TARGET_RADIUS_PX) to the depth threshold below.
 GRAB_DEPTH_PATH = os.path.join(
@@ -87,7 +87,7 @@ class YoloBallFollowMode(BallFollowMode):
         self.detector = detector
         # MiDaS-based monocular depth on the same NPU. When present we sample
         # D = depth at the ball's centre each frame. When grab_depth.json is
-        # also present (from teach_grab_depth.py), the descent + grab gates
+        # also present (from calibrate_offset), the descent + grab gates
         # switch from pixel-radius to depth.
         self.depth = depth_detector
         self.last_depth_at_ball = None
@@ -106,7 +106,7 @@ class YoloBallFollowMode(BallFollowMode):
         self._depth_ms_ewma = 0.0
         self._frame_ms_ewma = 0.0
         self._last_frame_t = None
-        # Taught reference from teach_grab_depth.py — D_grab feeds telemetry,
+        # Taught reference from calibrate_offset — D_grab feeds telemetry,
         # ball_r_at_grab is the auto radius target for the radius gate.
         self.r_grab_taught = None
         if os.path.exists(GRAB_DEPTH_PATH):

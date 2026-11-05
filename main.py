@@ -286,14 +286,11 @@ def _build_calibrator_argv(name, camera_index):
             sys.executable, os.path.join(here, 'browser_calibrate_offset.py'),
             '--no-prompt', '--camera', str(camera_index),
         ],
-        # YOLO mode "training" analog: capture the depth-at-ball D_grab used
-        # by the depth-gated grab. The teach script runs in --web-driven mode
-        # so it serves the same kind of browser UI as the HSV calibrators
-        # (no stdin needed — operator clicks Release/Hold/Snapshot/Quit).
+        # Grab depth is taught by the same calibrator (its view-pose
+        # snapshot), so the grab_depth target opens it too — one calibration.
         'calibrate_grab_depth': [
-            sys.executable, os.path.join(here, 'teach_grab_depth.py'),
-            '--web-driven', '--web-port', '8000',
-            '--camera', str(camera_index),
+            sys.executable, os.path.join(here, 'browser_calibrate_offset.py'),
+            '--no-prompt', '--camera', str(camera_index),
         ],
     }
     return table.get(name)

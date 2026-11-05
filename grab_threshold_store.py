@@ -27,11 +27,10 @@ yolo modes re-read this store every frame):
 Persisted to grab_threshold.json; `grab_threshold_reset` restores all
 three defaults.
 
-Teaching (save_taught): the calibrate_offset view-pose snapshot and the
-calibrate grab_depth tool both record the ball's depth + YOLO radius at the
-pose where the arm should decide to grab, write grab_depth.json, and set
-D_threshold to D_grab minus a noise margin. The calibrators run as separate
-processes, so the yolo modes call reload() when they start.
+Teaching (save_taught): the calibrate_offset view-pose snapshot records
+the ball's depth + YOLO radius at the pose where the arm decides to grab, write grab_depth.json, and set
+D_threshold to D_grab minus a noise margin. The calibrator runs as a separate
+process, so the yolo modes call reload() when they start.
 """
 
 import json
