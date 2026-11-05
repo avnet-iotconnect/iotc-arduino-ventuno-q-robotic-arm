@@ -491,29 +491,43 @@ python3 ball_calibrate.py --output box_color.json [--camera N]
 Same UI as ball-color calibration. Click on the drop box in the live preview.
 The pickplace mode reads `box_color.json` to find and approach the drop target.
 
-#### 2d. Camera-Gripper Offset — `calibrate_cam_offset.py` (Optional)
+#### 2d. Camera-Gripper Calibration — `calibrate_offset` (View Pose + Grab Reach)
 
-Skip unless the gripper consistently closes next to the ball rather than on it.
+Every camera mount is a little different, so this teaches the arm two things
+for **your** camera position:
 
-```bash
-./calibrate_offset.sh
-# or:
-python3 calibrate_cam_offset.py [--camera N]
-```
+- **View pose** — where tracking should stop: the gripper just above/behind
+  the ball with the ball fully in view. Saves where the ball sits in the image
+  and how big it looks.
+- **Grab reach** (optional) — the joint move from the view pose to the pose
+  where the open jaws are around the ball. Use it when the camera **can't see
+  the ball once it is between the jaws**: the arm stops at the view pose,
+  makes this move without the camera, then closes the gripper.
 
-Uses a two-phase process because the camera cannot see the ball when the wrist
-is in grab position:
+Send `calibrate_offset` from the /IOTCONNECT dashboard (or run
+`./calibrate_offset.sh` with the demo stopped), then open
+`http://<board-ip>:8000/`:
 
-1. **Phase 1 — Record grab position**: Place the ball on the table. Hold the arm,
-   Enter → torque drops. Pose the gripper directly over the ball at grab height.
-   Press `g` + Enter. Records all servo positions.
+1. **Support the arm** — torque drops when the calibrator starts.
+2. Place the ball on the table. Pose the arm at the **view pose**: gripper just
+   above/behind the ball, ball fully in the camera view (green circle). Hold
+   steady and click **1. Snapshot view pose**.
+3. **Without moving the ball**, move the arm so the open jaws are around it, at
+   the height they should close. The camera doesn't need to see the ball. Click
+   **2. Snapshot grab pose**.
+   - Skip this step if the ball stays in view between the jaws — the gripper
+     then closes right at the view pose.
+4. Click **Hold pose**, then **Quit**.
 
-2. **Phase 2 — Record view position**: Tilt the wrist down until the ball appears
-   in the live camera view. Hold steady, press `s` + Enter — the script averages
-   the last ~30 frames and writes `CAM_GRIPPER_OFFSET_X/Y` and `WRIST_VIEW_OFFSET`
-   into `modes/ball_follow.py` automatically.
+Results are saved to `cam_gripper_offset.json` and used by the `ball`,
+`pickplace` and `yolo-*` modes the next time they start. Redoing step 1
+clears the grab reach (it is measured from the view pose), so always redo
+step 2 after it.
 
-3. Press `h` + Enter to re-enable torque, `q` + Enter to quit.
+> [!NOTE]
+> With a grab reach taught, also teach the YOLO grab depth
+> ([Re-Teaching D_grab](#re-teaching-d_grab-required-at-every-new-site)) at the
+> **view pose**, not the grab pose — that is where the arm decides to grab.
 
 ### Running the Demo
 
@@ -563,7 +577,8 @@ SCAN every time the ball flickers off for a frame.
 | `MOVE_DURATION_MS` | 220 | How long each per-frame move takes. Too short = small commands ignored; too long = loop rate drops. |
 | `CENTER_DEADBAND_PX` | 60 | Pixel error inside which the controller stops trimming. Must be ≥ `MIN_TRIM_STEP_PAN × pixels/unit` or the controller will oscillate. |
 | `TARGET_RADIUS_PX`, `RADIUS_TOLERANCE` | — | Apparent ball radius (px) meaning "close enough to grab". Tune for your ball + grab height. |
-| `CAM_GRIPPER_OFFSET_X/Y` | 0/0 | Aim-point shift in pixels, set by `calibrate_cam_offset.py`. Leave at 0/0 unless you observe a systematic miss. |
+| `CAM_GRIPPER_OFFSET_X/Y` | 0/0 | Fallback aim-point shift in pixels. Normally comes from `cam_gripper_offset.json` (the `calibrate_offset` view pose), which overrides these, along with `TARGET_RADIUS_PX`. |
+| `GRAB_REACH_MS` | 1200 | Duration of the taught blind move from the view pose to the grab pose (only used when a grab reach is calibrated). |
 | `LIFT_MAX`, `ELBOW_MAX` | — | Safety ceilings during approach so a never-satisfied radius check can't drive the gripper into the table. |
 | `NO_BALL_GRACE_FRAMES` | — | Consecutive lost-ball frames before falling back to SCANNING. |
 | `SCAN_POSES` | — | Poses cycled while searching. Captured with `teach_pose.py`. |
@@ -668,6 +683,8 @@ MiDaS depth values are scene-specific — the same physical grab pose can read
 
 5. Hand-pose the gripper exactly where you want it at the grab moment. The ball
    should sit just below the gripper jaws and be fully visible to the camera.
+   If you taught a grab reach in `calibrate_offset`, pose the arm at the
+   **view pose** instead — the ball fully in view, where tracking stops.
 
 6. **While still holding the arm**, press `s` + Enter. Captures 20 frames and
    saves the median D as `grab_depth.json`. (The script refuses to save if you

@@ -149,8 +149,8 @@ class YoloBallFollowMode(BallFollowMode):
 
         self.frame_count += 1
         h, w = frame.shape[:2]
-        cx_target = w // 2 + bf.CAM_GRIPPER_OFFSET_X
-        cy_target = h // 2 + bf.CAM_GRIPPER_OFFSET_Y
+        cx_target = w // 2 + self.offset_x
+        cy_target = h // 2 + self.offset_y
 
         try:
             pos = bf._read_all_positions(arm)
@@ -279,7 +279,7 @@ class YoloBallFollowMode(BallFollowMode):
                         (0, 165, 255), 2, cv2.LINE_AA)
         pan_err = bx - cx_target
         tilt_err = by - cy_target
-        radius_err = bf.TARGET_RADIUS_PX - br
+        radius_err = self.target_radius_px - br
         centered_ok = abs(pan_err) <= bf.CENTER_DEADBAND_PX and abs(tilt_err) <= bf.CENTER_DEADBAND_PX
         approach_centered_ok = abs(pan_err) <= bf.APPROACH_DEADBAND_PX and abs(tilt_err) <= bf.APPROACH_DEADBAND_PX
         radius_ok = abs(radius_err) <= bf.RADIUS_TOLERANCE
@@ -304,7 +304,7 @@ class YoloBallFollowMode(BallFollowMode):
         gate_mode = grab_threshold_store.get_mode()
         r_target = grab_threshold_store.get_radius()
         if r_target is None:
-            r_target = self.r_grab_taught or bf.TARGET_RADIUS_PX
+            r_target = self.r_grab_taught or self.target_radius_px
         r_floor = r_target - bf.RADIUS_TOLERANCE
         # Use EWMA-smoothed D for the depth signal (MiDaS has ~20-unit
         # single-frame noise); raw value kept for the overlay.
@@ -402,7 +402,7 @@ class YoloBallFollowMode(BallFollowMode):
         if approach_centered_ok and too_far:
             if pos[bf.SERVO_SHOULDER_LIFT] >= bf.LIFT_MAX or pos[bf.SERVO_ELBOW_FLEX] >= bf.ELBOW_MAX:
                 gate_state = (f"D={D:.0f} target={self.D_grab:.0f}" if use_depth
-                              else f"r={int(br)} target={bf.TARGET_RADIUS_PX}")
+                              else f"r={int(br)} target={self.target_radius_px}")
                 self._log(f"APPROACH-BLOCKED: lift={pos[bf.SERVO_SHOULDER_LIFT]}>={bf.LIFT_MAX} or elbow={pos[bf.SERVO_ELBOW_FLEX]}>={bf.ELBOW_MAX}; {gate_state}")
             else:
                 d_lift = bf.APPROACH_STEP
@@ -468,7 +468,7 @@ class YoloBallFollowMode(BallFollowMode):
             "D_threshold": float(grab_threshold_store.get()),
             "gate_mode": grab_threshold_store.get_mode(),
             "r_target": float(grab_threshold_store.get_radius()
-                              or self.r_grab_taught or bf.TARGET_RADIUS_PX),
+                              or self.r_grab_taught or self.target_radius_px),
             "D_grab": float(self.D_grab) if self.D_grab is not None else 0.0,
             "D_tolerance": float(self.D_tolerance) if self.D_tolerance is not None else 0.0,
         })

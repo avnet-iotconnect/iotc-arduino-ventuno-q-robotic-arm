@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 Avnet
-"""Browser-based camera-gripper offset + grab-radius calibrator.
+"""Browser-based camera-gripper calibrator: view pose + grab reach.
 
-Same job as calibrate_cam_offset.py but rendered as MJPEG + a small HTML
-page so it works on the RZ/G3E (no display server, opencv-python-headless).
-Workflow:
+Rendered as MJPEG + a small HTML page, so it works from any browser on the
+LAN. Workflow:
 
   1. SUPPORT THE ARM — all torque drops on launch.
   2. Open http://<board-ip>:<port>/ in a browser.
-  3. Pose the gripper directly over the ball at the height it would normally
-     grab from. The live overlay shows the detected ball, its (bx, by, r),
-     and the resulting OFFSET_X / OFFSET_Y.
-  4. Hold steady, click "Snapshot". The script averages the last ~30 frames
-     and prints recommended values for:
-        CAM_GRIPPER_OFFSET_X
-        CAM_GRIPPER_OFFSET_Y
-        TARGET_RADIUS_PX        <-- the ball's apparent radius at grab dist
-     Paste these into modes/ball_follow.py.
+  3. STEP 1 — view pose. Pose the arm where it should stop tracking: gripper
+     just above/behind the ball, ball FULLY in the camera view. Hold steady,
+     click "1. Snapshot view pose". Averages the last ~30 frames and saves
+     the ball's pixel offset from image center, its apparent radius, and the
+     arm's joint pose to cam_gripper_offset.json.
+  4. STEP 2 — grab pose (optional). Without moving the ball, move the arm
+     so the open jaws are around the ball (the camera does not need to see
+     it), click "2. Snapshot grab pose". Saves the joint move from the view
+     pose to here; at grab time the arm makes that move blind, then closes.
+     Skip step 2 if the ball stays visible between the jaws — the gripper
+     then closes right at the view pose.
   5. "Hold pose" re-engages torque. "Release torque" drops it again.
+
+The ball / pickplace / yolo modes load the file when they start.
 """
 
 import argparse
@@ -95,6 +98,7 @@ class State:
         self.recent = deque(maxlen=SAMPLE_WINDOW)  # (bx, by, br)
         self.last_snapshot = None               # dict shown on the page
         self.quit = False
+        self.arm = None                         # set in main(); used to read joint poses
 
 
 # ---------------------------- camera loop -----------------------------
@@ -186,15 +190,17 @@ INDEX_HTML = """<!doctype html>
   .hi { color: #6cf; }
 </style></head>
 <body>
-<h2>Camera-gripper offset + grab-radius calibrator</h2>
+<h2>Camera-gripper calibrator: view pose + grab reach</h2>
 <div id="wrap">
   <div>
     <img id="stream" src="/stream" alt="(camera stream)">
-    <p>Pose the gripper directly above the ball at the height it would normally grab from. Hold steady, click <b>Snapshot</b>.</p>
+    <p><b>Step 1:</b> pose the arm where it should stop tracking: gripper just above/behind the ball, with the ball <b>fully in view</b>. Hold steady, click <b>1. Snapshot view pose</b>.</p>
+    <p><b>Step 2:</b> without moving the ball, move the arm so the open jaws are around it (the camera doesn't need to see it), then click <b>2. Snapshot grab pose</b>. Skip step 2 if the ball stays in view between the jaws.</p>
   </div>
   <div id="panel">
     <div>
-      <button id="snap">Snapshot (s)</button>
+      <button id="snap">1. Snapshot view pose (s)</button>
+      <button id="grab">2. Snapshot grab pose (g)</button>
       <button id="hold">Hold pose (h)</button>
       <button id="release">Release torque (r)</button>
       <button id="quit">Quit</button>
@@ -213,6 +219,7 @@ async function action(path) {
   refresh(d);
 }
 document.getElementById('snap').onclick    = () => action('/snapshot');
+document.getElementById('grab').onclick    = () => action('/grab_snapshot');
 document.getElementById('hold').onclick    = () => action('/hold');
 document.getElementById('release').onclick = () => action('/release');
 document.getElementById('quit').onclick    = () => { if (confirm('Quit?')) action('/quit'); };
@@ -220,6 +227,7 @@ document.getElementById('quit').onclick    = () => { if (confirm('Quit?')) actio
 document.addEventListener('keydown', (ev) => {
   if (ev.target.tagName === 'INPUT') return;
   if (ev.key === 's') action('/snapshot');
+  if (ev.key === 'g') action('/grab_snapshot');
   if (ev.key === 'h') action('/hold');
   if (ev.key === 'r') action('/release');
 });
@@ -278,6 +286,52 @@ def _state_payload(state, message=None, snapshot_text=None):
     return payload
 
 
+def _read_pose(arm, servo_ids, reads=3):
+    """Median of a few reads per servo (hand-posed arm, torque off).
+    Returns {servo_id: pos} or None if the arm can't be read."""
+    if arm is None:
+        return None
+    pose = {}
+    for sid in servo_ids:
+        vals = []
+        for _ in range(reads):
+            try:
+                vals.append(int(arm.getPosition(sid)))
+            except Exception as e:
+                print(f"[calib] servo {sid} read failed: {e}")
+            time.sleep(0.02)
+        if not vals:
+            return None
+        pose[sid] = int(_median(vals))
+    return pose
+
+
+def _do_grab_snapshot(state):
+    """Step 2: record the joint move from the saved view pose to here."""
+    pose = _read_pose(state.arm, cam_gripper_offset_store.REACH_SERVOS)
+    if pose is None:
+        return "grab pose: could not read the arm's joint positions (is the arm connected?)"
+    data = cam_gripper_offset_store.save_reach(pose)
+    if data is None:
+        return "grab pose: do STEP 1 (view pose snapshot) first — the reach is measured from it"
+    names = {3: "wrist_flex", 4: "elbow", 5: "shoulder_lift", 6: "shoulder_pan"}
+    lines = "\n".join(f"  {names[int(sid)]:<13} {int(d):+d}" for sid, d in data['grab_reach'].items())
+    text = (
+        "=== STEP 2 saved: grab reach (view pose -> grab pose) ===\n"
+        f"{lines}\n\n"
+        f"--- saved to {cam_gripper_offset_store.DEFAULT_PATH} ---\n"
+        "At grab time the arm stops at the view pose, makes this move without\n"
+        "the camera, then closes the gripper.\n"
+        "# Send `set_mode ...` from the cloud to reload.\n"
+    )
+    with state.lock:
+        state.last_snapshot = (state.last_snapshot or "") + "\n" + text
+        full = state.last_snapshot
+    print()
+    print(text)
+    return full
+
+
 def _do_snapshot(state):
     with state.lock:
         samples = list(state.recent)
@@ -302,9 +356,16 @@ def _do_snapshot(state):
     # one snapshot here actually changes the live behaviour the next time
     # those modes initialise (no SSH or file edit required).
     target_radius_int = int(round(r_med))
-    cam_gripper_offset_store.save(off_x, off_y, target_radius_int)
+    view_pose = _read_pose(state.arm, cam_gripper_offset_store.REACH_SERVOS)
+    cam_gripper_offset_store.save(off_x, off_y, target_radius_int, view_pose=view_pose)
+    pose_note = (f"view pose (joints) = {view_pose}\n"
+                 "Next: STEP 2 — move the open jaws around the ball, click\n"
+                 "'2. Snapshot grab pose'. Skip it if the camera still sees the\n"
+                 "ball between the jaws.\n"
+                 if view_pose else
+                 "(arm not readable — view pose not saved; STEP 2 unavailable)\n")
     text = (
-        f"=== averaged over last {len(samples)} frames ===\n"
+        f"=== STEP 1 saved: view pose, averaged over last {len(samples)} frames ===\n"
         f"bx = {bx_med}  (std {bx_std:.1f})\n"
         f"by = {by_med}  (std {by_std:.1f})\n"
         f"r  = {r_med:.1f}  (std {r_std:.1f})\n"
@@ -313,8 +374,9 @@ def _do_snapshot(state):
         f"cam_gripper_offset_x = {off_x}\n"
         f"cam_gripper_offset_y = {off_y}\n"
         f"target_radius_px     = {target_radius_int}\n"
+        f"{pose_note}"
         f"# (suggested RADIUS_TOLERANCE for ball_follow.py: +/-{max(15, int(round(r_std * 3)))})\n"
-        f"# Send `set_mode ball` or `set_mode pickplace` from the cloud to reload.\n"
+        f"# Send `set_mode ...` from the cloud to reload.\n"
     )
     with state.lock:
         state.last_snapshot = text
@@ -379,6 +441,10 @@ def make_handler(state, arm):
         def do_POST(self):
             if self.path == "/snapshot":
                 text = _do_snapshot(state)
+                self._json(_state_payload(state, snapshot_text=text))
+                return
+            if self.path == "/grab_snapshot":
+                text = _do_grab_snapshot(state)
                 self._json(_state_payload(state, snapshot_text=text))
                 return
             if self.path == "/hold":
@@ -475,6 +541,7 @@ def main():
         print("[calib] --no-arm: running camera-only (no torque control)")
 
     state = State()
+    state.arm = arm
     cam_thread = threading.Thread(
         target=camera_loop,
         args=(state, args.camera, args.width, args.height, lower, upper,

@@ -87,6 +87,7 @@ GRIPPER_SETTLE_READS = 3        # how many agreeing reads (100 ms apart) before 
 GRIPPER_SETTLE_DWELL_S = 0.5    # let the servo build full torque on the ball before lifting
 GRIPPER_EMPTY_POS = 900         # jaws at/after this after the lift = nothing in them (a ball holds them well below)
 GRIPPER_TRACK_POS = 250         # jaw opening while tracking (matches the scan poses)
+GRAB_REACH_MS = 1200            # duration of the taught blind move from the view pose to the grab pose
 
 # --- arm conventions (from main.execute_arm_action) ---
 SERVO_GRIPPER = 1
@@ -196,6 +197,20 @@ class BallFollowMode(Mode):
             self.scan_pose_labels = SCAN_POSE_LABELS
         self.scan_idx = 0
         self.last_scan_move_at = 0.0
+        # Camera-gripper calibration (cam_gripper_offset.json, written by the
+        # calibrate_offset browser calibrator): where the ball should sit in
+        # the image and how big it should look when tracking stops, plus the
+        # optional taught reach from there to the grab pose. Falls back to the
+        # module constants (no reach) when nothing has been calibrated.
+        import cam_gripper_offset_store
+        ofs = cam_gripper_offset_store.load() or {}
+        self.offset_x = int(ofs.get('cam_gripper_offset_x', CAM_GRIPPER_OFFSET_X))
+        self.offset_y = int(ofs.get('cam_gripper_offset_y', CAM_GRIPPER_OFFSET_Y))
+        self.target_radius_px = int(ofs.get('target_radius_px', TARGET_RADIUS_PX))
+        self.grab_reach = cam_gripper_offset_store.load_reach()
+        if ofs:
+            print(f"[ball] cam-gripper calibration: offset=({self.offset_x:+d},{self.offset_y:+d}) "
+                  f"radius={self.target_radius_px}px reach={self.grab_reach or 'none (grab in place)'}")
         # perf instrumentation (printed from process_frame every PERF_EVERY frames)
         self._perf_n = 0
         self._perf_detect = 0.0
@@ -221,10 +236,10 @@ class BallFollowMode(Mode):
 
         self.frame_count += 1
         h, w = frame.shape[:2]
-        # Aim at the pixel where the ball appears when the gripper is over it,
-        # not the geometric image center. See CAM_GRIPPER_OFFSET_X/Y.
-        cx_target = w // 2 + CAM_GRIPPER_OFFSET_X
-        cy_target = h // 2 + CAM_GRIPPER_OFFSET_Y
+        # Aim at the pixel where the ball appears at the calibrated view pose,
+        # not the geometric image center (see cam_gripper_offset_store).
+        cx_target = w // 2 + self.offset_x
+        cy_target = h // 2 + self.offset_y
 
         # Single batched USB read for all 6 servos, reused below.
         # If even the per-servo fallback inside _read_all_positions fails,
@@ -345,7 +360,7 @@ class BallFollowMode(Mode):
                         (0, 165, 255), 2, cv2.LINE_AA)
         pan_err = bx - cx_target
         tilt_err = by - cy_target
-        radius_err = TARGET_RADIUS_PX - br
+        radius_err = self.target_radius_px - br
         centered_ok = abs(pan_err) <= CENTER_DEADBAND_PX and abs(tilt_err) <= CENTER_DEADBAND_PX
         # Looser gate that just requires the ball to be roughly under the gripper:
         # used to allow descent while pan/tilt are still trimming, so we don't
@@ -356,7 +371,7 @@ class BallFollowMode(Mode):
                     f"r={int(br)} dx={pan_err:+d} dy={tilt_err:+d}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
         cv2.putText(annotated,
-                    f"center={'OK' if centered_ok else 'NO'}  radius={'OK' if radius_ok else 'NO'} (target={TARGET_RADIUS_PX}+/-{RADIUS_TOLERANCE})",
+                    f"center={'OK' if centered_ok else 'NO'}  radius={'OK' if radius_ok else 'NO'} (target={self.target_radius_px}+/-{RADIUS_TOLERANCE})",
                     (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                     (0, 255, 0) if centered_ok and radius_ok else (0, 200, 255),
                     2, cv2.LINE_AA)
@@ -395,11 +410,11 @@ class BallFollowMode(Mode):
         # (looser approach_centered_ok). Pan/tilt corrections continue every
         # frame and trim the ball back toward the gripper aim point even while
         # we descend, so we don't wait forever for perfect centering.
-        if approach_centered_ok and br < TARGET_RADIUS_PX - RADIUS_TOLERANCE:
+        if approach_centered_ok and br < self.target_radius_px - RADIUS_TOLERANCE:
             # Hard ceiling: if we're already at the safety limit, stop approaching.
             # Prevents table slam when radius_ok never triggers.
             if pos[SERVO_SHOULDER_LIFT] >= LIFT_MAX or pos[SERVO_ELBOW_FLEX] >= ELBOW_MAX:
-                self._log(f"APPROACH-BLOCKED: lift={pos[SERVO_SHOULDER_LIFT]}>={LIFT_MAX} or elbow={pos[SERVO_ELBOW_FLEX]}>={ELBOW_MAX}; r={int(br)} target={TARGET_RADIUS_PX}")
+                self._log(f"APPROACH-BLOCKED: lift={pos[SERVO_SHOULDER_LIFT]}>={LIFT_MAX} or elbow={pos[SERVO_ELBOW_FLEX]}>={ELBOW_MAX}; r={int(br)} target={self.target_radius_px}")
             else:
                 d_lift = APPROACH_STEP   # reach forward
                 # Coordinate elbow with shoulder — extends the arm rather than just
@@ -497,9 +512,14 @@ class BallFollowMode(Mode):
         return best
 
     def _do_grab(self, arm):
-        """Open fully, close on the ball, wait for the jaws to stop, lift and
-        return home. Home pose deliberately excludes the gripper so the ball
-        isn't dropped.
+        """Open fully, (if taught) reach from the view pose to the grab pose,
+        close on the ball, wait for the jaws to stop, lift and return home.
+        Home pose deliberately excludes the gripper so the ball isn't dropped.
+
+        The reach (cam_gripper_offset.json ``grab_reach``) is for mounts where
+        the camera can't see the ball once it is between the jaws: tracking
+        stops at the taught view pose and this blind, taught joint move puts
+        the jaws around the ball.
 
         Returns True if we are holding the ball after the lift. If the jaws
         closed on nothing, or are (nearly) shut after the lift (ball slipped
@@ -508,6 +528,7 @@ class BallFollowMode(Mode):
         empty gripper to the box.
         """
         arm.setPosition(SERVO_GRIPPER, 0, duration=500, wait=True)
+        view_pose = self._reach_to_grab_pose(arm)
         arm.setPosition(SERVO_GRIPPER, GRIPPER_CLOSE_TARGET, duration=GRIPPER_CLOSE_MS, wait=True)
 
         # wait=True only sleeps for the commanded duration; closing on the
@@ -517,6 +538,10 @@ class BallFollowMode(Mode):
         if actual >= GRIPPER_CLOSE_TARGET - GRIPPER_STALL_SLACK:
             print(f"[ball] gripper closed to {actual} — nothing in the jaws; back to tracking")
             arm.setPosition(SERVO_GRIPPER, GRIPPER_TRACK_POS, duration=300, wait=True)
+            if view_pose:
+                # Back to where the camera could see the ball, so tracking
+                # can find it again instead of staring past it.
+                arm.setPosition(view_pose, duration=GRAB_REACH_MS, wait=True)
             return False
 
         # Stalled on the ball. Leave the servo commanded at full close so it
@@ -552,6 +577,22 @@ class BallFollowMode(Mode):
 
         arm.setPosition(HOME_POSE_KEEP_GRIP, duration=1800, wait=True)
         return True
+
+    def _reach_to_grab_pose(self, arm):
+        """Apply the taught grab reach relative to the current pose. Returns
+        the pre-reach pose ([[servo, pos], ...]) so a missed grab can back
+        out to it, or None when no reach is taught / the pose can't be read."""
+        if not self.grab_reach:
+            return None
+        try:
+            here = {sid: int(arm.getPosition(sid)) for sid in self.grab_reach}
+        except Exception as e:
+            print(f"[ball] reach skipped — position read failed: {e}")
+            return None
+        target = [[sid, _clamp(here[sid] + d)] for sid, d in self.grab_reach.items()]
+        print(f"[ball] reaching to grab pose: {here} -> {dict(target)}")
+        arm.setPosition(target, duration=GRAB_REACH_MS, wait=True)
+        return [[sid, pos] for sid, pos in here.items()]
 
     def _wait_gripper_settled(self, arm):
         """Poll the gripper until GRIPPER_SETTLE_READS consecutive reads agree

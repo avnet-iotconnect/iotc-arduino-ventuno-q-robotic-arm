@@ -7,7 +7,7 @@
 # Usage:
 #   ./launch_gui.sh calibrate-ball     # opens ball calibrator on the HDMI display
 #   ./launch_gui.sh calibrate-box      # opens box calibrator (writes box_color.json)
-#   ./launch_gui.sh calibrate-offset   # camera-gripper offset calibrator (cv2 window)
+#   ./launch_gui.sh calibrate-offset   # camera-gripper calibrator (browser page on :8000)
 #   ./launch_gui.sh teach-pose         # opens scan-pose teacher
 #   ./launch_gui.sh ball               # runs the ball-follow demo
 #   ./launch_gui.sh pickplace          # runs the pick-and-place demo
@@ -58,7 +58,7 @@ case "$cmd" in
     exec stdbuf -oL -eL "$PYTHON" -u ball_calibrate.py --output box_color.json $NO_PROMPT_ARG "$@"
     ;;
   calibrate-offset|calibrate-cam-offset)
-    exec stdbuf -oL -eL "$PYTHON" -u calibrate_cam_offset.py "$@"
+    exec stdbuf -oL -eL "$PYTHON" -u browser_calibrate_offset.py $NO_PROMPT_ARG "$@"
     ;;
   teach-pose|teach)
     exec stdbuf -oL -eL "$PYTHON" -u teach_pose.py "$@"
