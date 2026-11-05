@@ -198,18 +198,17 @@ They are git-ignored, so they never get committed.
 > created without WebRTC (or with a different template) can still run every demo,
 > just not with `--webrtc` — to add video later you must create a new device.
 
-3. **Device Certificate:** choose one of the two options below.
+3. **Device Certificate:** choose **Auto-generated** and save the device.
 
-#### 4c. Option A — let /IOTCONNECT generate the certificate (simplest)
+#### 4c. Download the credentials and copy them to the board
 
-1. Choose **Auto-generated** for the device certificate and save the device.
-2. On the device's page, download:
+1. On the device's page, download:
    - the **certificates** zip (e.g. `VentunoQArm-certificates.zip`), which
      contains `cert_<device>.crt` and `pk_<device>.pem`, and
    - the **device configuration** file (paper-and-cog icon), which downloads as
      `iotcDeviceConfig.json` (your browser may add a number, e.g.
      `iotcDeviceConfig (3).json`).
-3. Unzip the certificates, then copy the three files to the board **and rename
+2. Unzip the certificates, then copy the three files to the board **and rename
    them** as shown. Both certificate files are already PEM — renaming the
    `.crt` to `.pem` is all that's needed, no conversion. From your PC, in the
    folder where you downloaded them:
@@ -229,26 +228,7 @@ They are git-ignored, so they never get committed.
    Put quotes around a file name that contains spaces, e.g.
    `"iotcDeviceConfig (3).json"`.
 
-#### 4d. Option B — generate the certificate on the board (quickstart script)
-
-1. Choose **Use my certificate** for the device certificate and leave the page open.
-2. On the board, from the project directory, run Avnet's quickstart script. The
-   `source board_env.sh` line matters: the script uses `python3`, and only the
-   demo's conda env has the /IOTCONNECT SDK.
-   ```bash
-   cd ~/iotc-tria-vision-ai-kit-robotic-arm
-   source board_env.sh
-   wget https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk-demos/refs/heads/main/common/scripts/quickstart.sh && bash ./quickstart.sh
-   ```
-   It writes `device-pkey.pem` and `device-cert.pem` here and prints the certificate.
-3. Paste the printed certificate (including the `BEGIN`/`END` lines) into the
-   certificate box in the browser and click **Save and View**.
-4. Download the device configuration file (paper-and-cog icon), open it in a text
-   editor, and paste its contents into the terminal when the script asks. It is
-   saved as `iotcDeviceConfig.json`.
-5. The script also downloads a starter `app.py` — ignore it; this demo uses `main.py`.
-
-#### 4e. Check the files
+#### 4d. Check the files
 
 On the board:
 ```bash
