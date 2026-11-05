@@ -209,6 +209,7 @@ _kvs_refresh_started = False
 # Tuple shapes:
 #   ('switch_mode', mode_name)               — switch active vision mode
 #   ('stop_mode',)                           — drop into IDLE (no mode running)
+#   ('stop_mode', 'release_torque')          — drop into IDLE, then all torque off
 #   ('run_subprocess', argv_list, label)     — spawn a calibrator
 #   ('stop_subprocess',)                     — terminate any running subprocess
 _pending_action = None
@@ -675,12 +676,22 @@ def process_iotconnect_commands(arm):
                 # Drop all six servo torques so the user can hand-pose the
                 # arm before snapshotting a scan pose. Tabletop only — on a
                 # wall mount the arm will swing under gravity.
-                try:
-                    arm.servoOff()
-                    ack_message = "all servo torque OFF — pose the arm by hand, then send hold_pose"
-                except Exception as e:
-                    ack_status = C2dAck.CMD_FAILED
-                    ack_message = f"servoOff failed: {e}"
+                if _current_mode is not None:
+                    # A running vision mode reads (and may command) the servos
+                    # every frame, which keeps them powered — servoOff alone
+                    # doesn't take. Stop the mode first; the outer loop turns
+                    # torque off once it is idle. (Hand-posing a live demo is
+                    # unsafe anyway: it moves again as soon as it sees a ball.)
+                    set_pending_action(('stop_mode', 'release_torque'))
+                    ack_message = (f"stopping {_current_mode.name} (now IDLE) and turning all servo "
+                                   "torque OFF — pose the arm by hand, then send hold_pose")
+                else:
+                    try:
+                        arm.servoOff()
+                        ack_message = "all servo torque OFF — pose the arm by hand, then send hold_pose"
+                    except Exception as e:
+                        ack_status = C2dAck.CMD_FAILED
+                        ack_message = f"servoOff failed: {e}"
             elif command_name == 'hold_pose':
                 # Re-engage torque at whatever pose the arm is currently in.
                 # Clamp to 0-1000 (like teach_scan_pose/teach_drop_pose): hand-
@@ -1609,6 +1620,12 @@ def main():
                 continue
             if kind == 'stop_mode':
                 state = 'idle'
+                if len(action) > 1 and action[1] == 'release_torque' and arm is not None:
+                    try:
+                        arm.servoOff()
+                        print("[supervisor] mode stopped; all servo torque OFF (release_torque)")
+                    except Exception as e:
+                        print(f"[supervisor] servoOff after stopping mode failed: {e}")
                 continue
             if kind == 'stop_subprocess':
                 # No subprocess in mode/idle states — just stay.

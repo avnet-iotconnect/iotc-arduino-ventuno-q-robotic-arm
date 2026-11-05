@@ -774,7 +774,7 @@ These commands work via /IOTCONNECT regardless of which demo is running:
 | `set_mode mode=idle` | Stop the running demo; arm + cloud stay connected |
 | `calibrate target=<name>` | Launch a browser-UI calibrator (`ball`, `box`, `offset`) — open `http://<board-ip>:8000/`. `grab_depth` opens the same calibrator as `offset` (grab depth is taught by its step 1). |
 | `calibrate grab_depth <D>` | Set the YOLO grab-gate depth floor D directly (e.g. `calibrate grab_depth 650`) — applied live, persisted to `grab_threshold.json`. `calibrate grab_depth show` reads it back. Same via `calibrate_grab_depth <D>`. |
-| `release_torque` | Drop all servo torques for hand-posing |
+| `release_torque` | Drop all servo torques for hand-posing. If a demo is running, it is stopped first (back to IDLE). Support the arm — and catch a held ball — before sending. |
 | `hold_pose` | Re-engage torque at the current pose |
 | `teach_scan_pose name=<n>` | Snapshot current arm pose into a named scan slot |
 | `camera_setting <name> <value>` | Update a camera setting live (exposure, saturation, etc.) |
