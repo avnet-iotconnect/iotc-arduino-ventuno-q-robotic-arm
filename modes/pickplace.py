@@ -39,7 +39,7 @@ from .ball_follow import (
     PAN_GAIN, TILT_GAIN, PAN_DIR, TILT_DIR,
     MAX_STEP, MIN_TRIM_STEP_PAN,
     MOVE_DURATION_MS, CENTER_DEADBAND_PX,
-    PAN_MIN, PAN_MAX, LIFT_MAX,
+    PAN_MIN, PAN_MAX, LIFT_MAX, pan_limits,
     NO_BALL_GRACE_FRAMES,
     MIN_CONTOUR_AREA, MIN_FILL_RATIO,
     CAM_GRIPPER_OFFSET_X, CAM_GRIPPER_OFFSET_Y,
@@ -244,6 +244,7 @@ class PickPlaceMode(Mode):
         else:
             self.scan_poses = SCAN_POSES
             self.scan_pose_labels = SCAN_POSE_LABELS
+        self.pan_min, self.pan_max = pan_limits(self.scan_poses)
         # Camera-gripper offset (so BOX_LOCKING aims for where the gripper
         # actually is, not where the camera optical axis points). Applied to
         # box centering target. Falls back to module constants if not yet
@@ -439,7 +440,7 @@ class PickPlaceMode(Mode):
         targets = []
         if d_pan:
             targets.append([SERVO_SHOULDER_PAN,
-                            _clamp(pos[SERVO_SHOULDER_PAN] + d_pan, lo=PAN_MIN, hi=PAN_MAX)])
+                            _clamp(pos[SERVO_SHOULDER_PAN] + d_pan, lo=self.pan_min, hi=self.pan_max)])
         if d_tilt:
             # Constrain wrist_flex to the downward range so the gripper stays
             # pointing down — see BOX_WRIST_FLEX_MIN/MAX comment up top.

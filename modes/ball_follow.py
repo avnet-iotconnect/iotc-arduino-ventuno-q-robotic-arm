@@ -62,8 +62,9 @@ PAN_MAX = 860              # 2026-07-19: widened from [300, 800] to cover the ta
                            # mount) — the old clamp let scanning FIND a ball the tracker
                            # was then forbidden to FOLLOW: pan pinned at the clamp,
                            # remainder under MIN_TRIM_STEP_PAN static friction, pan_err
-                           # frozen just outside the deadband, grab never fires. Keep
-                           # these >= the widest taught scan pose pans.
+                           # frozen just outside the deadband, grab never fires. Modes
+                           # widen this automatically to cover the taught scan poses
+                           # (pan_limits()), so these are only the minimum envelope.
 # Hard safety limits so an approach that never satisfies radius_ok (bad HSV, wrong-sized ball,
 # mis-set TARGET_RADIUS_PX) can't drive the gripper into the table. Tune by teach-mode probing.
 LIFT_MAX = 800             # shoulder_lift ceiling during approach (larger = reach further down)
@@ -137,6 +138,16 @@ def _read_all_positions(arm):
     return {sid: int(arm.getPosition(sid)) for sid in range(1, 7)}
 
 
+def pan_limits(scan_poses):
+    """Tracking clamp for shoulder_pan: [PAN_MIN, PAN_MAX], widened to cover
+    every scan pose's pan. Otherwise a ball found from a scan pose outside the
+    clamp can't be followed — pan pins at the limit and the grab never fires.
+    Scan poses vary per build (taught with teach_scan_pose), so derive this
+    instead of asking everyone to keep PAN_MIN/PAN_MAX in sync by hand."""
+    pans = [int(p) for pose in scan_poses for sid, p in pose if sid == SERVO_SHOULDER_PAN]
+    return min([PAN_MIN] + pans), max([PAN_MAX] + pans)
+
+
 def _clamp(v, lo=0, hi=1000):
     return max(lo, min(hi, int(v)))
 
@@ -195,6 +206,9 @@ class BallFollowMode(Mode):
         else:
             self.scan_poses = SCAN_POSES
             self.scan_pose_labels = SCAN_POSE_LABELS
+        self.pan_min, self.pan_max = pan_limits(self.scan_poses)
+        if (self.pan_min, self.pan_max) != (PAN_MIN, PAN_MAX):
+            print(f"[ball] pan clamp widened to [{self.pan_min}, {self.pan_max}] to cover the scan poses")
         self.scan_idx = 0
         self.last_scan_move_at = 0.0
         # Camera-gripper calibration (cam_gripper_offset.json, written by the
@@ -440,7 +454,7 @@ class BallFollowMode(Mode):
 
         targets = []
         if d_pan:
-            new_pan = _clamp(pos[SERVO_SHOULDER_PAN] + d_pan, lo=PAN_MIN, hi=PAN_MAX)
+            new_pan = _clamp(pos[SERVO_SHOULDER_PAN] + d_pan, lo=self.pan_min, hi=self.pan_max)
             targets.append([SERVO_SHOULDER_PAN, new_pan])
         if d_tilt:
             new_tilt = _clamp(pos[SERVO_WRIST_FLEX] + d_tilt)

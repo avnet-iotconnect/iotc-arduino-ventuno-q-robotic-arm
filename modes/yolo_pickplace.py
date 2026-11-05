@@ -419,7 +419,7 @@ class YoloBallFollowMode(BallFollowMode):
         targets = []
         if d_pan:
             targets.append([bf.SERVO_SHOULDER_PAN,
-                            bf._clamp(pos[bf.SERVO_SHOULDER_PAN] + d_pan, lo=bf.PAN_MIN, hi=bf.PAN_MAX)])
+                            bf._clamp(pos[bf.SERVO_SHOULDER_PAN] + d_pan, lo=self.pan_min, hi=self.pan_max)])
         if d_tilt:
             targets.append([bf.SERVO_WRIST_FLEX, bf._clamp(pos[bf.SERVO_WRIST_FLEX] + d_tilt)])
         if d_lift:
