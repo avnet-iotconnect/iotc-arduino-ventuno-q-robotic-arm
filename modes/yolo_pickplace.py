@@ -403,10 +403,10 @@ class YoloBallFollowMode(BallFollowMode):
             d_tilt = int(round(bf._step_toward(tilt_err, bf.TILT_GAIN, bf.MAX_STEP))) * bf.TILT_DIR
             d_elbow += int(round(d_tilt * bf.TILT_ELBOW_RATIO)) * bf.TILT_ELBOW_DIR
         if approach_centered_ok and too_far:
-            if pos[bf.SERVO_SHOULDER_LIFT] >= bf.LIFT_MAX or pos[bf.SERVO_ELBOW_FLEX] >= bf.ELBOW_MAX:
+            if pos[bf.SERVO_SHOULDER_LIFT] >= self.lift_max or pos[bf.SERVO_ELBOW_FLEX] >= self.elbow_max:
                 gate_state = (f"D={D:.0f} target={self.D_grab:.0f}" if use_depth
                               else f"r={int(br)} target={self.target_radius_px}")
-                self._log(f"APPROACH-BLOCKED: lift={pos[bf.SERVO_SHOULDER_LIFT]}>={bf.LIFT_MAX} or elbow={pos[bf.SERVO_ELBOW_FLEX]}>={bf.ELBOW_MAX}; {gate_state}")
+                self._log(f"APPROACH-BLOCKED: lift={pos[bf.SERVO_SHOULDER_LIFT]}>={self.lift_max} or elbow={pos[bf.SERVO_ELBOW_FLEX]}>={self.elbow_max}; {gate_state}")
             else:
                 d_lift = bf.APPROACH_STEP
                 d_elbow += int(round(bf.APPROACH_STEP * bf.ELBOW_REACH_RATIO))
@@ -423,9 +423,9 @@ class YoloBallFollowMode(BallFollowMode):
         if d_tilt:
             targets.append([bf.SERVO_WRIST_FLEX, bf._clamp(pos[bf.SERVO_WRIST_FLEX] + d_tilt)])
         if d_lift:
-            targets.append([bf.SERVO_SHOULDER_LIFT, bf._clamp(pos[bf.SERVO_SHOULDER_LIFT] + d_lift, hi=bf.LIFT_MAX)])
+            targets.append([bf.SERVO_SHOULDER_LIFT, bf._clamp(pos[bf.SERVO_SHOULDER_LIFT] + d_lift, hi=max(self.lift_max, pos[bf.SERVO_SHOULDER_LIFT]))])
         if d_elbow:
-            targets.append([bf.SERVO_ELBOW_FLEX, bf._clamp(pos[bf.SERVO_ELBOW_FLEX] + d_elbow, hi=bf.ELBOW_MAX)])
+            targets.append([bf.SERVO_ELBOW_FLEX, bf._clamp(pos[bf.SERVO_ELBOW_FLEX] + d_elbow, hi=max(self.elbow_max, pos[bf.SERVO_ELBOW_FLEX]))])
 
         t_arm_start = time.perf_counter()
         if targets:
