@@ -19,7 +19,7 @@ yolo modes re-read this store every frame):
                 Command: set_grab_gate <depth|radius|both>
 
   radius_target radius floor in px — gate satisfied when ball r >=
-                (radius_target - RADIUS_TOLERANCE). None = auto: use the
+                (radius_target - 15% of it, see ball_follow.radius_tolerance). None = auto: use the
                 taught ball_r_at_grab from grab_depth.json, falling back
                 to TARGET_RADIUS_PX. Default auto.
                 Command: set_grab_radius <px|auto>

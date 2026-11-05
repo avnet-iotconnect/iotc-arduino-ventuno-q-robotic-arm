@@ -44,7 +44,9 @@ MOVE_DURATION_MS = 220     # per-step move duration; raised so small servo comma
 CENTER_DEADBAND_PX = 60    # widened 2026-04-19 from 25 — must be >= MIN_TRIM_STEP_PAN × pixels-per-servo-unit (~7 px/unit measured), otherwise a single floored pan command (18 units = ~126 px of ball motion) flings the ball clear past the deadband and the controller oscillates +18, -18, +18 forever. Trade-off: GRAB now fires at up to 60 px off-target, but the gripper jaw is wider than that
 APPROACH_DEADBAND_PX = 60  # 2026-05-02 reverted from a brief 120 experiment. On this Tria + downward-pointing-Brio geometry, descent (shoulder_lift extending forward) moves the ball further past the camera frame ("behind" the arm) — descent reframing fights wrist trim, ball escapes downward, controller cycles SCANNING → TRACKING → SCANNING. Keeping descent gated by tight 60 means: center first (slow when wrist friction-stalls just outside 60), then descend; if you see "stuck at dy~67 forever" with wrist_flex not moving, the fix is to RAISE MIN_TRIM_STEP (done 8 -> 14 on 2026-09-10) so the wrist actually breaks friction — NOT to widen this deadband.
 TARGET_RADIUS_PX = 220     # ball "close enough" radius in pixels (lowered to match what we actually observe at grab distance for the current ball)
-RADIUS_TOLERANCE = 40      # +/- around TARGET_RADIUS_PX considered "at distance"
+RADIUS_TOLERANCE = 40      # +/- around TARGET_RADIUS_PX considered "at distance" (legacy fixed value; see radius_tolerance())
+RADIUS_TOLERANCE_FRAC = 0.15  # tolerance as a fraction of the target radius: a fixed 40 px suited
+                              # the Tria's ball at r=220 but accepts r=28..108 for a ball taught at 68
 MIN_CONTOUR_AREA = 200     # ignore tiny mask blobs (noise)
 MIN_FILL_RATIO = 0.65      # contour_area / enclosing_circle_area; ball ≈0.85+, irregular blobs typically <0.5
 # Camera-to-gripper offset in image pixels — measured 2026-04-18 with
@@ -172,6 +174,12 @@ def reach_limits(scan_poses, view_pose=None):
     return (min(1000, max(lift_base + lifts)), min(1000, max(elbow_base + elbows)))
 
 
+def radius_tolerance(target_radius_px):
+    """+/- px around the target radius that counts as 'at grab distance':
+    15% of it (33 px at the Tria's r=220, ~10 px at r=68), at least 5 px."""
+    return max(5, int(round(RADIUS_TOLERANCE_FRAC * target_radius_px)))
+
+
 def _clamp(v, lo=0, hi=1000):
     return max(lo, min(hi, int(v)))
 
@@ -245,6 +253,7 @@ class BallFollowMode(Mode):
         self.offset_x = int(ofs.get('cam_gripper_offset_x', CAM_GRIPPER_OFFSET_X))
         self.offset_y = int(ofs.get('cam_gripper_offset_y', CAM_GRIPPER_OFFSET_Y))
         self.target_radius_px = int(ofs.get('target_radius_px', TARGET_RADIUS_PX))
+        self.radius_tol = radius_tolerance(self.target_radius_px)
         self.grab_reach = cam_gripper_offset_store.load_reach()
         self.lift_max, self.elbow_max = reach_limits(self.scan_poses, ofs.get('view_pose'))
         if (self.lift_max, self.elbow_max) != (LIFT_MAX, ELBOW_MAX):
@@ -408,12 +417,12 @@ class BallFollowMode(Mode):
         # used to allow descent while pan/tilt are still trimming, so we don't
         # sit forever waiting for perfect centering before reaching for the ball.
         approach_centered_ok = abs(pan_err) <= APPROACH_DEADBAND_PX and abs(tilt_err) <= APPROACH_DEADBAND_PX
-        radius_ok = abs(radius_err) <= RADIUS_TOLERANCE
+        radius_ok = abs(radius_err) <= self.radius_tol
         cv2.putText(annotated,
                     f"r={int(br)} dx={pan_err:+d} dy={tilt_err:+d}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
         cv2.putText(annotated,
-                    f"center={'OK' if centered_ok else 'NO'}  radius={'OK' if radius_ok else 'NO'} (target={self.target_radius_px}+/-{RADIUS_TOLERANCE})",
+                    f"center={'OK' if centered_ok else 'NO'}  radius={'OK' if radius_ok else 'NO'} (target={self.target_radius_px}+/-{self.radius_tol})",
                     (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                     (0, 255, 0) if centered_ok and radius_ok else (0, 200, 255),
                     2, cv2.LINE_AA)
@@ -452,7 +461,7 @@ class BallFollowMode(Mode):
         # (looser approach_centered_ok). Pan/tilt corrections continue every
         # frame and trim the ball back toward the gripper aim point even while
         # we descend, so we don't wait forever for perfect centering.
-        if approach_centered_ok and br < self.target_radius_px - RADIUS_TOLERANCE:
+        if approach_centered_ok and br < self.target_radius_px - self.radius_tol:
             # Hard ceiling: if we're already at the safety limit, stop approaching.
             # Prevents table slam when radius_ok never triggers.
             if pos[SERVO_SHOULDER_LIFT] >= self.lift_max or pos[SERVO_ELBOW_FLEX] >= self.elbow_max:

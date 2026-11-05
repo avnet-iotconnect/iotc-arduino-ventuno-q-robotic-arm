@@ -285,7 +285,7 @@ class YoloBallFollowMode(BallFollowMode):
         radius_err = self.target_radius_px - br
         centered_ok = abs(pan_err) <= bf.CENTER_DEADBAND_PX and abs(tilt_err) <= bf.CENTER_DEADBAND_PX
         approach_centered_ok = abs(pan_err) <= bf.APPROACH_DEADBAND_PX and abs(tilt_err) <= bf.APPROACH_DEADBAND_PX
-        radius_ok = abs(radius_err) <= bf.RADIUS_TOLERANCE
+        radius_ok = abs(radius_err) <= self.radius_tol
         # Sticky-centered: at close range each 18-unit pan can fling the ball
         # past the deadband, so centered_ok flickers. Latch it for a few
         # frames after it first becomes true so the grab gate fires when
@@ -308,7 +308,7 @@ class YoloBallFollowMode(BallFollowMode):
         r_target = grab_threshold_store.get_radius()
         if r_target is None:
             r_target = self.r_grab_taught or self.target_radius_px
-        r_floor = r_target - bf.RADIUS_TOLERANCE
+        r_floor = r_target - bf.radius_tolerance(r_target)
         # Use EWMA-smoothed D for the depth signal (MiDaS has ~20-unit
         # single-frame noise); raw value kept for the overlay.
         D = self.last_depth_at_ball_smoothed
