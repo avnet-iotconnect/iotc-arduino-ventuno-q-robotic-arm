@@ -328,6 +328,16 @@ def _extract_pair(command_args, name_keys=('name', 'key'), value_keys=('value', 
     return None, None
 
 
+def _strip_key(value, keys):
+    """`mode=yolo-ball` -> `yolo-ball` when the part before '=' is one of
+    `keys`. The dashboard sends the parameter text as typed, and the docs and
+    ack messages write parameters as key=value, so accept both forms."""
+    k, sep, v = value.partition('=')
+    if sep and k.strip() in keys:
+        return v.strip()
+    return value
+
+
 def _extract_arg(command_args, *keys):
     """Pull a named arg from an IoTConnect command_args payload.
 
@@ -337,7 +347,9 @@ def _extract_arg(command_args, *keys):
       - list (positional-arg command): ["ball"]            → "ball"
         (the SDK splits "set_mode ball" on whitespace into name + args list)
       - bare string:                   "ball"              → "ball"
-    Returns the value stripped + lowercased, or None if nothing usable."""
+    Positional values may also be written key=value ("mode=ball"), as the
+    docs show them. Returns the value stripped + lowercased, or None if
+    nothing usable."""
     if isinstance(command_args, dict):
         for k in keys:
             if k in command_args and command_args[k] is not None:
@@ -348,10 +360,10 @@ def _extract_arg(command_args, *keys):
         return None
     if isinstance(command_args, (list, tuple)):
         if command_args and command_args[0] is not None:
-            return str(command_args[0]).strip().lower()
+            return _strip_key(str(command_args[0]).strip().lower(), keys)
         return None
     if isinstance(command_args, str):
-        return command_args.strip().lower()
+        return _strip_key(command_args.strip().lower(), keys)
     return None
 
 
@@ -362,7 +374,7 @@ def _extract_second_arg(command_args, first, *keys):
     {"value": "grab_depth"} doesn't get read back as the value). None if absent."""
     if isinstance(command_args, (list, tuple)):
         if len(command_args) > 1 and command_args[1] is not None:
-            return str(command_args[1]).strip().lower()
+            return _strip_key(str(command_args[1]).strip().lower(), keys)
         return None
     if isinstance(command_args, dict):
         for k in keys:
