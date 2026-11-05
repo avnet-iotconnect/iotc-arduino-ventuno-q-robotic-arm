@@ -26,12 +26,15 @@ from detectors.depth_detector import DepthDetector
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--camera", type=int, default=2)
+    ap.add_argument("--camera", type=int, default=None)
     ap.add_argument("--model", default="/etc/models/midas_quantized.tflite")
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--save", default="/tmp/depth_selftest.jpg",
                     help="side-by-side raw|depth-colormap output path")
     args = ap.parse_args()
+    if args.camera is None:  # auto-detect the USB camera, as main.py does
+        from camera_settings import find_brio_index
+        args.camera = find_brio_index(fallback=2)
 
     depth = DepthDetector(args.model, use_npu=not args.cpu)
 

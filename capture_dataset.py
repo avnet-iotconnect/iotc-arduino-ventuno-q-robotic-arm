@@ -57,7 +57,7 @@ class State:
 
 def main():
     ap = argparse.ArgumentParser(description="Capture ball training images")
-    ap.add_argument("--camera", type=int, default=2)
+    ap.add_argument("--camera", type=int, default=None)
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                    "dataset", "images"))
     ap.add_argument("--interval", type=float, default=0.5, help="seconds between saves")
@@ -67,6 +67,9 @@ def main():
                     help="skip frame if mean abs pixel diff from last saved < this")
     ap.add_argument("--no-arm", action="store_true", help="skip arm connect (no torque control)")
     args = ap.parse_args()
+    if args.camera is None:  # auto-detect the USB camera, as main.py does
+        from camera_settings import find_brio_index
+        args.camera = find_brio_index(fallback=2)
 
     os.makedirs(args.out, exist_ok=True)
     existing = len([f for f in os.listdir(args.out) if f.endswith(".jpg")])

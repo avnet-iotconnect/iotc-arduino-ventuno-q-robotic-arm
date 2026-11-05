@@ -35,6 +35,9 @@ arm_id() {
         return
     done
 }
+# board_use_display (shared with board_env.sh)
+. "$BASE/deploy/display_env.sh"
+
 demo_running() { pgrep -f 'python -u main.py' >/dev/null; }
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
 
@@ -61,20 +64,15 @@ wait_network() {
 launch_idle() {
     wait_network
     cd "$BASE" || return
-    # Render the annotated OpenCV window on the board's HDMI output (the
-    # GNOME / Wayland session of this user, auto-login) whenever a vision mode
-    # runs, alongside the web stream on :8080. Without these env vars main.py
-    # detects no display and forces headless — which is also what happens if
-    # nobody is logged in on HDMI (the app falls back to headless + web).
-    rt="/run/user/$(id -u)"
-    if [ -S "$rt/wayland-0" ]; then
-        export XDG_RUNTIME_DIR="$rt"
-        export WAYLAND_DISPLAY=wayland-0
-        export QT_QPA_PLATFORM=wayland
+    # Render the annotated OpenCV window on the board's HDMI output (this
+    # user's GNOME desktop) whenever a vision mode runs, alongside the web
+    # stream on :8080. If nobody is logged in on HDMI, main.py sees no display
+    # and runs headless + web.
+    if board_use_display; then
+        log "HDMI desktop found (DISPLAY=${DISPLAY:-} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-})"
     else
-        log "no desktop session at $rt/wayland-0 -> headless (web stream only)"
+        log "nobody logged in on the HDMI desktop -> headless (web stream only)"
     fi
-    export LANG=C.UTF-8 LC_ALL=C.UTF-8   # Qt wants a UTF-8 locale
     YOLO_CONF="$CONF" nohup ./start.sh --mode idle --web-port 8080 \
         > /tmp/yolo.log 2>&1 < /dev/null &
     log "launched app in IDLE (HDMI + web; send set_mode to start movement)"

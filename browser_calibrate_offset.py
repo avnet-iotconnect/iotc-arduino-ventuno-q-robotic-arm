@@ -427,8 +427,8 @@ def _local_ip_hint():
 
 def main():
     parser = argparse.ArgumentParser(description="Browser cam-gripper offset calibrator")
-    parser.add_argument("--camera", type=int, default=2,
-                        help="OpenCV camera index (default 2 — Tria's direct UVC path to the Brio at /dev/video2; index 1 is the Qualcomm cam-serve shim that ignores V4L2 controls)")
+    parser.add_argument("--camera", type=int, default=None,
+                        help="OpenCV camera index (default: auto-detect the USB camera)")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--port", type=int, default=8000, help="HTTP listen port")
@@ -441,6 +441,9 @@ def main():
     parser.add_argument("--camera-settings", default=cam_settings.DEFAULT_PATH,
                         help="Path to camera_settings.json (shared with main.py).")
     args = parser.parse_args()
+    if args.camera is None:  # auto-detect the USB camera, as main.py does
+        from camera_settings import find_brio_index
+        args.camera = find_brio_index(fallback=2)
 
     if not os.path.exists(HSV_PATH):
         print(f"[calib] ERROR: {HSV_PATH} not found — run ball_calibrate.py first", file=sys.stderr)

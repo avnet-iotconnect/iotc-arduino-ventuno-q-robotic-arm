@@ -36,13 +36,16 @@ def load_labels(detector):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--camera", type=int, default=2)
+    ap.add_argument("--camera", type=int, default=None)
     ap.add_argument("--model", default="/etc/models/yolox_quantized.tflite")
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--box-order", default="xyxy", choices=["xyxy", "xywh"])
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--save", default="/tmp/yolo_selftest.jpg")
     args = ap.parse_args()
+    if args.camera is None:  # auto-detect the USB camera, as main.py does
+        from camera_settings import find_brio_index
+        args.camera = find_brio_index(fallback=2)
 
     det = YoloDetector(args.model, class_ids=None, conf_thres=args.conf,
                        use_npu=not args.cpu, box_order=args.box_order)

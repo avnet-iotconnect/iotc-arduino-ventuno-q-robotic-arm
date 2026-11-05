@@ -31,17 +31,9 @@ fi
 export ADSP_LIBRARY_PATH="${ADSP_LIBRARY_PATH:-/usr/lib/dsp/cdsp}"
 export LD_LIBRARY_PATH="/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-# HDMI display: the board's GNOME (Wayland) session for this user. Only set
-# when that session is actually running, so SSH / boot-time launches without
-# a logged-in desktop fall back to headless + web stream instead of failing.
-board_use_display() {
-    local rt="/run/user/$(id -u)"
-    if [ -S "$rt/wayland-0" ]; then
-        export XDG_RUNTIME_DIR="$rt"
-        export WAYLAND_DISPLAY=wayland-0
-        export QT_QPA_PLATFORM=wayland
-        export LANG=C.UTF-8 LC_ALL=C.UTF-8   # Qt wants a UTF-8 locale
-        return 0
-    fi
-    return 1
-}
+# HDMI display: board_use_display points GUI apps at this user's GNOME
+# desktop (X11 or Wayland). Returns 1 when nobody is logged in on HDMI, so
+# SSH / boot-time launches fall back to headless + web stream.
+_BOARD_ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$_BOARD_ENV_DIR/deploy/display_env.sh"

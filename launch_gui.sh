@@ -32,11 +32,10 @@ cd "$SCRIPT_DIR"
 # Python env ($PYTHON) + NPU runtime paths for this board.
 source "$SCRIPT_DIR/board_env.sh"
 
-# Wayland output (HDMI display owned by the GNOME session). Qt (used by
-# cv2.imshow) is told to use its Wayland plugin.
+# Send windows (cv2.imshow) to the HDMI desktop (GNOME session).
 if ! board_use_display; then
-    echo "WARNING: no desktop session for $(id -un) (/run/user/$(id -u)/wayland-0) —" \
-         "log in on the HDMI display first, or use --headless --web-port 8080." >&2
+    echo "WARNING: $(id -un) is not logged in on the HDMI desktop —" \
+         "log in there first, or use --headless --web-port 8080." >&2
 fi
 
 # Calibrators have an interactive `input()` safety prompt before dropping

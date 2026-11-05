@@ -617,10 +617,13 @@ def save_wrist_trim():
 def main():
     global arm
     parser = argparse.ArgumentParser()
-    parser.add_argument("--camera", type=int, default=2)
+    parser.add_argument("--camera", type=int, default=None)
     parser.add_argument("--width",  type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     args = parser.parse_args()
+    if args.camera is None:  # auto-detect the USB camera, as main.py does
+        from camera_settings import find_brio_index
+        args.camera = find_brio_index(fallback=2)
 
     if not os.path.exists(HSV_PATH):
         print(f"[calib] ERROR: {HSV_PATH} not found — run ball_calibrate.py first")

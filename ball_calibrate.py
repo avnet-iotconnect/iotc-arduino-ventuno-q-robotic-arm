@@ -111,10 +111,13 @@ def save_range(lower, upper, camera_index):
 def main():
     global hsv_frame
     parser = argparse.ArgumentParser(description="HSV ball-color calibrator")
-    parser.add_argument("--camera", type=int, default=2, help="OpenCV camera index (default 2)")
+    parser.add_argument("--camera", type=int, default=None, help="OpenCV camera index (default: auto-detect the USB camera)")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     args = parser.parse_args()
+    if args.camera is None:  # auto-detect the USB camera, as main.py does
+        from camera_settings import find_brio_index
+        args.camera = find_brio_index(fallback=2)
 
     print("[calib] connecting to xArm...")
     arm = xarm.Controller('USB')

@@ -441,8 +441,8 @@ def _local_ip_hint():
 
 def main():
     parser = argparse.ArgumentParser(description="Browser HSV color calibrator (ball or box)")
-    parser.add_argument("--camera", type=int, default=2,
-                        help="OpenCV camera index (default 2)")
+    parser.add_argument("--camera", type=int, default=None,
+                        help="OpenCV camera index (default: auto-detect the USB camera)")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--port", type=int, default=8000, help="HTTP listen port")
@@ -455,6 +455,9 @@ def main():
     parser.add_argument("--no-release", action="store_true",
                         help="Don't drop torque at startup. Use when the arm is already in a useful pose and you just want to sample colors.")
     args = parser.parse_args()
+    if args.camera is None:  # auto-detect the USB camera, as main.py does
+        from camera_settings import find_brio_index
+        args.camera = find_brio_index(fallback=2)
 
     arm = None
     if not args.no_arm:
