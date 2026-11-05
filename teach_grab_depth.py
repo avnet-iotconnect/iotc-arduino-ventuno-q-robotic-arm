@@ -2,8 +2,13 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 Avnet
 """Teach D_grab — the relative-depth value at the ball's centre when the arm
-is in a known grab pose. Run this once, then the runtime depth-gated grab
-uses the saved value (``grab_depth.json``) to decide when to close the gripper.
+is at the pose where it should decide to grab. Saves ``grab_depth.json`` and
+sets the grab gate's depth floor from it (grab_threshold_store.save_taught).
+
+The calibrate_offset view-pose snapshot does the same automatically when the
+YOLO models are installed; use this tool to re-teach depth alone (e.g. at a
+new site with different lighting). With a grab reach taught, pose the arm at
+the VIEW pose (ball fully in view), not the grab pose.
 
 Workflow:
   1. Stop the running demo so /dev/video2 is free.
@@ -34,6 +39,7 @@ import cv2
 import xarm
 from xarm import Servo
 
+import grab_threshold_store
 import main as app  # _FreshCamera applies camera_settings.json
 from detectors import make_ball_detector, DepthDetector
 
@@ -209,27 +215,14 @@ def main():
             time.sleep(0.1)
         if len(d_vals) < args.frames * 0.5:
             return False, f"only {len(d_vals)}/{args.frames} valid frames"
-        D_grab = statistics.median(d_vals)
-        r_grab = statistics.median(r_vals)
-        stdev_d = statistics.stdev(d_vals) if len(d_vals) > 1 else 0.0
-        if stdev_d < 0.5:
-            return False, ("D stdev ~0 across all frames - torque was ON during "
-                           "snap. Release torque, hand-pose, snap again BEFORE hold.")
-        payload = {
-            "D_grab": float(D_grab),
-            "D_min": float(min(d_vals)),
-            "D_max": float(max(d_vals)),
-            "D_stdev": float(stdev_d),
-            "ball_r_at_grab": float(r_grab),
-            "n_frames": len(d_vals),
-            "model": os.path.basename(args.model),
-            "depth_model": os.path.basename(args.depth_model),
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        with open(OUT_FILE, "w") as f:
-            json.dump(payload, f, indent=2)
-        return True, (f"D_grab={D_grab:.1f} (n={len(d_vals)}, "
-                      f"stdev={stdev_d:.1f}, range {min(d_vals):.1f}..{max(d_vals):.1f})")
+        try:
+            p, threshold = grab_threshold_store.save_taught(
+                d_vals, r_vals, model=args.model, depth_model=args.depth_model)
+        except ValueError as e:
+            return False, str(e)
+        return True, (f"D_grab={p['D_grab']:.1f} (n={p['n_frames']}, "
+                      f"stdev={p['D_stdev']:.1f}, range {p['D_min']:.1f}..{p['D_max']:.1f}); "
+                      f"grab gate now D >= {threshold:g}")
 
     # ---------- Web-driven path (cloud-triggered) ----------
     if args.web_driven:

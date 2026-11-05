@@ -12,7 +12,10 @@ LAN. Workflow:
      just above/behind the ball, ball FULLY in the camera view. Hold steady,
      click "1. Snapshot view pose". Averages the last ~30 frames and saves
      the ball's pixel offset from image center, its apparent radius, and the
-     arm's joint pose to cam_gripper_offset.json.
+     arm's joint pose to cam_gripper_offset.json. When the YOLO + MiDaS
+     models are installed it also teaches the YOLO grab depth here (the
+     same thing `calibrate grab_depth` does): grab_depth.json + the grab
+     gate's depth floor.
   4. STEP 2 — grab pose (optional). Without moving the ball, move the arm
      so the open jaws are around the ball (the camera does not need to see
      it), click "2. Snapshot grab pose". Saves the joint move from the view
@@ -40,6 +43,7 @@ import xarm
 
 import camera_settings as cam_settings
 import cam_gripper_offset_store
+import grab_threshold_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HSV_PATH = os.path.join(HERE, "ball_color.json")
@@ -99,12 +103,34 @@ class State:
         self.last_snapshot = None               # dict shown on the page
         self.quit = False
         self.arm = None                         # set in main(); used to read joint poses
+        self.depth_recent = deque(maxlen=SAMPLE_WINDOW)  # (D, yolo_r) — YOLO grab-depth teach
+        self.depth_models = None                # (model_path, depth_path) when YOLO teach is on
 
 
 # ---------------------------- camera loop -----------------------------
 
+def _load_depth_teach(use_npu=True):
+    """YOLO ball detector + MiDaS, same models/conf as the yolo modes, so
+    the view-pose snapshot can also teach the YOLO grab depth. Returns
+    (ball_det, depth_det, model_path, depth_path) or None if unavailable."""
+    try:
+        from modes import yolo_model_choice, MIDAS_MODEL
+        model_path, conf = yolo_model_choice()
+        if not (os.path.exists(model_path) and os.path.exists(MIDAS_MODEL)):
+            print("[calib] YOLO/MiDaS models not installed — grab depth not taught here")
+            return None
+        from detectors import make_ball_detector, DepthDetector
+        print("[calib] loading YOLO + MiDaS for grab-depth teach...")
+        ball_det = make_ball_detector(model_name=model_path, conf_thres=conf, use_npu=use_npu)
+        depth_det = DepthDetector(MIDAS_MODEL, use_npu=use_npu)
+        return ball_det, depth_det, model_path, MIDAS_MODEL
+    except Exception as e:
+        print(f"[calib] grab-depth teach unavailable ({e}) — offset/reach only")
+        return None
+
+
 def camera_loop(state, camera_index, width, height, lower, upper,
-                camera_settings_path=None, jpeg_quality=80):
+                camera_settings_path=None, jpeg_quality=80, depth_teach=None):
     cap = cv2.VideoCapture(camera_index)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
@@ -132,6 +158,17 @@ def camera_loop(state, camera_index, width, height, lower, upper,
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
 
             ball = largest_blob(mask)
+
+            # YOLO + depth at the ball (for the grab-depth teach), measured
+            # exactly as the yolo modes measure it.
+            ydet = D = None
+            if depth_teach is not None:
+                ball_det, depth_det = depth_teach[0], depth_teach[1]
+                dets = ball_det.detect(frame)
+                ydet = max(dets, key=lambda d: d.r) if dets else None
+                if ydet is not None:
+                    dm = depth_det.infer(frame)
+                    D = depth_det.at(dm, ydet.cx, ydet.cy, patch_r=max(5, int(ydet.r / 3)))
 
             # Annotate. Mirror horizontally so what the user sees matches
             # how ball_follow displays the wrist camera.
@@ -167,6 +204,14 @@ def camera_loop(state, camera_index, width, height, lower, upper,
                     cv2.putText(annotated, "no ball detected", (10, 25),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                                 (0, 0, 255), 2, cv2.LINE_AA)
+                if depth_teach is not None:
+                    if ydet is not None and D is not None:
+                        state.depth_recent.append((float(D), float(ydet.r)))
+                        ytxt, ycol = f"YOLO r={ydet.r:.0f}  depth D={D:.0f}", (255, 200, 0)
+                    else:
+                        ytxt, ycol = "YOLO: no ball (grab depth not measured)", (0, 0, 255)
+                    cv2.putText(annotated, ytxt, (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.55, ycol, 2, cv2.LINE_AA)
 
                 ok2, buf = cv2.imencode(".jpg", annotated, enc_params)
                 if ok2:
@@ -194,7 +239,7 @@ INDEX_HTML = """<!doctype html>
 <div id="wrap">
   <div>
     <img id="stream" src="/stream" alt="(camera stream)">
-    <p><b>Step 1:</b> pose the arm where it should stop tracking: gripper just above/behind the ball, with the ball <b>fully in view</b>. Hold steady, click <b>1. Snapshot view pose</b>.</p>
+    <p><b>Step 1:</b> pose the arm where it should stop tracking: gripper just above/behind the ball, with the ball <b>fully in view</b>. Keep holding the arm (torque off) and click <b>1. Snapshot view pose</b>. With the YOLO models installed this also teaches the YOLO grab depth (blue text at the bottom of the video).</p>
     <p><b>Step 2:</b> without moving the ball, move the arm so the open jaws are around it (the camera doesn't need to see it), then click <b>2. Snapshot grab pose</b>. Skip step 2 if the ball stays in view between the jaws.</p>
   </div>
   <div id="panel">
@@ -364,6 +409,19 @@ def _do_snapshot(state):
                  "ball between the jaws.\n"
                  if view_pose else
                  "(arm not readable — view pose not saved; STEP 2 unavailable)\n")
+    depth_note = ""
+    if state.depth_models is not None:
+        with state.lock:
+            dsamples = list(state.depth_recent)
+        try:
+            p, thr = grab_threshold_store.save_taught(
+                [d for d, _ in dsamples], [r for _, r in dsamples],
+                model=state.depth_models[0], depth_model=state.depth_models[1])
+            depth_note = (f"YOLO grab depth taught: D_grab={p['D_grab']:.0f} "
+                          f"(stdev {p['D_stdev']:.1f}), YOLO r={p['ball_r_at_grab']:.0f}px\n"
+                          f"  -> grab gate now D >= {thr:g}  ({grab_threshold_store.GRAB_DEPTH_PATH})\n")
+        except ValueError as e:
+            depth_note = f"YOLO grab depth NOT taught: {e}\n"
     text = (
         f"=== STEP 1 saved: view pose, averaged over last {len(samples)} frames ===\n"
         f"bx = {bx_med}  (std {bx_std:.1f})\n"
@@ -374,6 +432,7 @@ def _do_snapshot(state):
         f"cam_gripper_offset_x = {off_x}\n"
         f"cam_gripper_offset_y = {off_y}\n"
         f"target_radius_px     = {target_radius_int}\n"
+        f"{depth_note}"
         f"{pose_note}"
         f"# (suggested RADIUS_TOLERANCE for ball_follow.py: +/-{max(15, int(round(r_std * 3)))})\n"
         f"# Send `set_mode ...` from the cloud to reload.\n"
@@ -502,6 +561,8 @@ def main():
                         help="Skip the 'press Enter to release torque' safety prompt. "
                              "Use ONLY when launched by main.py's supervisor for cloud-driven "
                              "calibration on a tabletop demo where the arm cannot fall.")
+    parser.add_argument("--no-depth", action="store_true",
+                        help="Don't teach the YOLO grab depth with the view-pose snapshot")
     parser.add_argument("--no-arm", action="store_true",
                         help="Skip xArm connection (camera-only test mode)")
     parser.add_argument("--camera-settings", default=cam_settings.DEFAULT_PATH,
@@ -542,10 +603,14 @@ def main():
 
     state = State()
     state.arm = arm
+    depth_teach = None if args.no_depth else _load_depth_teach()
+    if depth_teach is not None:
+        state.depth_models = (depth_teach[2], depth_teach[3])
     cam_thread = threading.Thread(
         target=camera_loop,
         args=(state, args.camera, args.width, args.height, lower, upper,
               args.camera_settings),
+        kwargs={"depth_teach": depth_teach},
         daemon=True,
     )
     cam_thread.start()

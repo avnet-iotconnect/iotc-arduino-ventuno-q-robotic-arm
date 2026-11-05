@@ -28,6 +28,30 @@ from .base import Mode
 __all__ = ["Mode", "make_mode"]
 
 
+MIDAS_MODEL = "/etc/models/midas_quantized.tflite"
+
+
+def yolo_model_choice():
+    """(model_path, conf) the yolo modes use — also used by calibrate_offset
+    so it measures with the same detector. Custom model/ball_best.tflite if
+    present, else the stock YOLO-X; YOLO_MODEL / YOLO_CONF env vars override."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    custom = os.path.join(here, "model", "ball_best.tflite")
+    if os.path.exists(custom):
+        # 0.5 (was 0.7): a ball partially cut off at the frame edge scores
+        # ~0.4-0.5 while fully-visible detections sit at 0.95+, so 0.5
+        # keeps tracking sticky at the edges without admitting noise.
+        model_path, conf = custom, 0.5
+    else:
+        model_path, conf = "/etc/models/yolox_quantized.tflite", 0.25
+    # main.py has no --conf/--model flags, so allow overriding the YOLO
+    # defaults via env vars when launched through ./start.sh, e.g.
+    #   YOLO_CONF=0.3 ./start.sh --mode yolo-pickplace
+    model_path = os.environ.get("YOLO_MODEL", model_path)
+    conf = float(os.environ.get("YOLO_CONF", conf))
+    return model_path, conf
+
+
 def make_mode(name: str) -> Mode:
     if name == "asl":
         from .asl import ASLMode
@@ -43,25 +67,12 @@ def make_mode(name: str) -> Mode:
         from detectors import make_ball_detector, DepthDetector
         from .yolo_pickplace import YoloPickPlaceMode, YoloBallFollowMode
 
-        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        custom = os.path.join(here, "model", "ball_best.tflite")
-        if os.path.exists(custom):
-            # 0.5 (was 0.7): a ball partially cut off at the frame edge scores
-            # ~0.4-0.5 while fully-visible detections sit at 0.95+, so 0.5
-            # keeps tracking sticky at the edges without admitting noise.
-            model_path, conf = custom, 0.5
-        else:
-            model_path, conf = "/etc/models/yolox_quantized.tflite", 0.25
-        # main.py has no --conf/--model flags, so allow overriding the YOLO
-        # defaults via env vars when launched through ./start.sh, e.g.
-        #   YOLO_CONF=0.3 ./start.sh --mode yolo-pickplace
-        model_path = os.environ.get("YOLO_MODEL", model_path)
-        conf = float(os.environ.get("YOLO_CONF", conf))
+        model_path, conf = yolo_model_choice()
         detector = make_ball_detector(model_name=model_path,
                                       conf_thres=conf, use_npu=True)
 
         depth_detector = None
-        midas = "/etc/models/midas_quantized.tflite"
+        midas = MIDAS_MODEL
         if os.path.exists(midas):
             try:
                 depth_detector = DepthDetector(midas, use_npu=True)

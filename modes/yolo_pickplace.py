@@ -39,8 +39,8 @@ GRAB_DEPTH_PATH = os.path.join(
 # Tolerance floor — protects against pathologically tight teach captures.
 # Effective tolerance = max(this, 1.5 * D_stdev) so the gate doesn't oscillate
 # on the measurement noise we observed during teach.
-DEPTH_TOL_FLOOR = 20.0
-DEPTH_TOL_MULT = 1.5
+DEPTH_TOL_FLOOR = grab_threshold_store.DEPTH_TOL_FLOOR
+DEPTH_TOL_MULT = grab_threshold_store.DEPTH_TOL_MULT
 
 # Pan-command cooldown (ms). The shoulder_pan bus servo has MIN_TRIM_STEP_PAN=18
 # (anything smaller stalls on static friction), but each 18-unit pan moves the
@@ -124,6 +124,9 @@ class YoloBallFollowMode(BallFollowMode):
                       f"+/-{self.D_tolerance:.0f}, ball_r_at_grab={r_str}")
             except Exception as e:
                 print(f"[yolo-ball] could not load {GRAB_DEPTH_PATH}: {e}")
+        # A calibrator (separate process) may have re-taught the gate since
+        # this process first read grab_threshold.json.
+        grab_threshold_store.reload()
         print(f"[yolo-ball] grab gate ARMED: {grab_threshold_store.describe()}  "
               f"(set_grab_gate / set_grab_threshold / set_grab_radius to change)")
 

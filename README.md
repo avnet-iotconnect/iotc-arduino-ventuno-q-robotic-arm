@@ -525,9 +525,12 @@ clears the grab reach (it is measured from the view pose), so always redo
 step 2 after it.
 
 > [!NOTE]
-> With a grab reach taught, also teach the YOLO grab depth
-> ([Re-Teaching D_grab](#re-teaching-d_grab-required-at-every-new-site)) at the
-> **view pose**, not the grab pose — that is where the arm decides to grab.
+> **YOLO demo:** when the YOLO and MiDaS models are installed (the bootstrap
+> installs them), the step 1 snapshot also teaches the YOLO **grab depth** —
+> how close the depth model says the ball is at the view pose — and sets the
+> grab gate's depth threshold from it. The calibrator shows `YOLO r=… depth D=…`
+> at the bottom of the video; it needs the YOLO model to see the ball too.
+> Keep holding the arm with torque **off** for the snapshot.
 
 ### Running the Demo
 
@@ -655,7 +658,7 @@ site-dependent.
 
 | File | Required? | Command |
 |------|-----------|---------|
-| `grab_depth.json` | **Required at every new site** | `./teach_grab.sh --model model/ball_best.tflite --camera N --web-port 8080` |
+| `grab_depth.json` | **Required at every new site** | `calibrate_offset` step 1 (cloud), or depth alone: `calibrate grab_depth` (cloud) |
 | `drop_pose.json` | Only if drop target moved | Send `release_torque`, hand-pose arm, then `hold_pose` + `teach_drop_pose` from cloud |
 | `scan_poses.json` | Only if ball staging area moved | `python3 teach_pose.py` |
 | `box_color.json` | Only if drop box or lighting changed | `python3 ball_calibrate.py --output box_color.json --camera N` |
@@ -665,6 +668,13 @@ site-dependent.
 
 MiDaS depth values are scene-specific — the same physical grab pose can read
 100+ units differently across lighting conditions and camera enumerations.
+
+`calibrate_offset` step 1 already teaches this. To re-teach **only** the depth
+(e.g. new room, same arm), send `calibrate grab_depth` from the dashboard and
+use the page at `http://<board-ip>:8000/`, or run the steps below by hand.
+Either way the snapshot saves `grab_depth.json` **and sets the grab gate's
+depth threshold** to the taught depth minus a noise margin. Check it with
+`calibrate grab_depth show`; override it with `calibrate grab_depth <D>`.
 
 1. Stop any running demo:
    ```bash
