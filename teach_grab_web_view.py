@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import cv2
 
 PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><title>Tria XArm - Teach Grab Depth</title>
+<html><head><meta charset="utf-8"><title>XArm - Teach Grab Depth</title>
 <style>
   body { font: 15px sans-serif; margin: 1em; background: #111; color: #eee; }
   #stream { display: block; max-width: 100%; border: 1px solid #333; }
@@ -35,15 +35,31 @@ PAGE = """<!doctype html>
   .hold  { background: #305fb0; }
   .snap  { background: #2a8a2a; }
   .quit  { background: #555; }
+  ol { max-width: 60em; line-height: 1.5; padding-left: 1.4em; }
+  .note { max-width: 60em; color: #aaa; }
 </style></head>
 <body>
-<h2>Tria XArm - teach grab depth</h2>
+<h2>XArm - teach grab depth</h2>
+<p class="note">Teaches the YOLO demo how close the ball looks at the moment the arm
+should decide to grab, and sets the grab threshold from it. One snapshot.</p>
+<ol>
+  <li><b>Support the arm</b> with one hand, then click <b>1. Release torque</b>.</li>
+  <li>Pose the arm by hand where it should decide to grab, with the ball
+      <b>fully in view</b> (green circle, live <b>D</b> value below).
+      If you taught a grab move in <code>calibrate_offset</code>, this is the
+      <b>view pose</b> from its step 1, not the grab pose.</li>
+  <li><b>Keep holding the arm</b> (torque off) and click <b>2. Snapshot</b>.
+      Wait about 2 seconds; the status line should end with
+      <code>grab gate now D &gt;= ...</code>.</li>
+  <li>Click <b>3. Hold torque</b> to lock the arm, then <b>4. Quit</b>
+      (closing this tab does not stop the calibrator).</li>
+</ol>
 <div id="status">connecting...</div>
 <div class="row">
-  <button class="rel"  onclick="release()">Release torque (pose by hand)</button>
-  <button class="hold" onclick="act('hold')">Hold torque (lock pose)</button>
-  <button class="snap" onclick="act('snap')">Snapshot D_grab</button>
-  <button class="quit" onclick="act('quit')">Quit</button>
+  <button class="rel"  onclick="release()">1. Release torque</button>
+  <button class="snap" onclick="act('snap')">2. Snapshot</button>
+  <button class="hold" onclick="act('hold')">3. Hold torque</button>
+  <button class="quit" onclick="act('quit')">4. Quit</button>
 </div>
 <img id="stream" src="/stream" alt="(camera stream)">
 <script>

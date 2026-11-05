@@ -169,7 +169,8 @@ def main():
             else:
                 cv2.putText(disp, "no ball detected", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
-            cv2.putText(disp, "TEACH GRAB DEPTH  (s=snapshot  h=hold  r=release  q=quit)",
+            cv2.putText(disp, "TEACH GRAB DEPTH  (use the buttons above)" if args.web_driven
+                        else "TEACH GRAB DEPTH  (s=snapshot  h=hold  r=release  q=quit)",
                         (10, 460), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
             if web is not None:
                 try:
