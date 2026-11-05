@@ -26,9 +26,10 @@
 #        - iotcDeviceConfig.json
 #        - device-cert.pem
 #        - device-pkey.pem
-#      Either SCP / adb push them from your PC, or download fresh from your
-#      IoTConnect dashboard's device entry. Without these, main.py runs but
-#      can't reach IoTConnect.
+#      If IoTConnect generated the certificate, its zip has cert_<device>.crt
+#      and pk_<device>.pem — copy them over (scp / adb push) RENAMED to
+#      device-cert.pem / device-pkey.pem. See README "/IOTCONNECT Onboarding".
+#      Without these, main.py runs but can't reach IoTConnect.
 #
 #   2. Connect hardware: xArm USB → VENTUNO Q USB-A, USB camera → the other
 #      USB-A (or a hub), arm power adapter (7.5V) → wall, arm switch → ON.
@@ -253,8 +254,10 @@ echo "  1. Place 3 IoTConnect credential files in $PROJECT_DIR :"
 echo "       iotcDeviceConfig.json"
 echo "       device-cert.pem"
 echo "       device-pkey.pem"
-echo "     SCP / adb push them from your PC, OR download fresh from your"
-echo "     IoTConnect dashboard's device entry."
+echo "     If IoTConnect generated the certificate, rename while copying:"
+echo "       cert_<device>.crt -> device-cert.pem"
+echo "       pk_<device>.pem   -> device-pkey.pem"
+echo "     (scp or adb push from your PC — see README \"/IOTCONNECT Onboarding\")"
 echo
 echo "  2. Connect hardware:"
 echo "       - xArm USB cable → VENTUNO Q USB-A"

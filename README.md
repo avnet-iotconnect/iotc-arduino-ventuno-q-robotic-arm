@@ -164,37 +164,104 @@ Demo #1 will refuse to start with a clear error if this file is absent.
 
 ### 4. /IOTCONNECT Onboarding
 
-> [!IMPORTANT]
-> If you intend to run this demo with the `--webrtc` flag to enable live video
-> streaming, the device **must** be created in /IOTCONNECT using the `robarmwebrtc`
-> template provided in this repository (`robarmwebrtc-template.json`). During device
-> creation you will be prompted to select a **Stream Resource** — choose **WebRTC**.
-> The /IOTCONNECT backend provisions a KVS WebRTC signaling channel at device
-> creation time and this choice cannot be changed afterward. If your device was
-> already created with a different template or the wrong stream resource, you must
-> create a new device using the `robarmwebrtc` template. Devices created without
-> the `robarmwebrtc` template can still run any demo without the `--webrtc` flag
-> and will not be affected.
+The board needs three files from /IOTCONNECT in the project directory
+(`~/iotc-tria-vision-ai-kit-robotic-arm`), with **exactly these names**:
 
-Follow [this guide](https://github.com/avnet-iotconnect/iotc-python-lite-sdk-demos/blob/main/common/general-guides/UI-ONBOARD.md)
-to onboard your Arduino VENTUNO Q to /IOTCONNECT.
+| File | What it is |
+|---|---|
+| `iotcDeviceConfig.json` | Device configuration (which account/device to connect as) |
+| `device-cert.pem` | Device certificate |
+| `device-pkey.pem` | Device private key — keep it secret |
 
-> [!CAUTION]
-> In **Step 14** of the onboarding guide, you must run the quickstart script from
-> inside the project directory so that the device certificate and config files are
-> placed where this demo expects them. Make sure you are in the project directory
-> first, then use this command instead of the one shown in the guide:
-> ```bash
-> wget https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk-demos/refs/heads/main/common/scripts/quickstart.sh && bash ./quickstart.sh
-> ```
+They are git-ignored, so they never get committed.
+
+#### 4a. Create the device template (once per account)
+
+1. Log in to [console.iotconnect.io](https://console.iotconnect.io) and go to
+   **Device → Templates → Create Template → Import**.
+2. Select [`robarmwebrtc-template.json`](robarmwebrtc-template.json) from this
+   repo. It appears in /IOTCONNECT as **`robarmRTC`**.
 
 > [!NOTE]
-> The starter `app.py` downloaded by the quickstart script can be disregarded —
-> this demo uses `main.py` instead.
+> If you imported `robarmRTC` from an older copy of this repo, import it again —
+> newer versions add commands (e.g. `camera_preset`) that the dashboard uses.
 
-Once onboarding is complete, drop the resulting `iotcDeviceConfig.json`,
-`device-cert.pem`, and `device-pkey.pem` into the project root. All three demos
-will then publish telemetry and accept remote commands automatically.
+#### 4b. Create the device
+
+1. Go to **Device → Devices → Create Device**. Set **Unique ID** and **Device
+   Name** to the same value (e.g. `VentunoQArm`), pick your **Entity**, and
+   select the **`robarmRTC`** template.
+2. **Stream Resource:** choose **WebRTC** if you want live video (`--webrtc`).
+
+> [!IMPORTANT]
+> The Stream Resource cannot be changed after the device is created. A device
+> created without WebRTC (or with a different template) can still run every demo,
+> just not with `--webrtc` — to add video later you must create a new device.
+
+3. **Device Certificate:** choose one of the two options below.
+
+#### 4c. Option A — let /IOTCONNECT generate the certificate (simplest)
+
+1. Choose **Auto-generated** for the device certificate and save the device.
+2. On the device's page, download:
+   - the **certificates** zip (e.g. `VentunoQArm-certificates.zip`), which
+     contains `cert_<device>.crt` and `pk_<device>.pem`, and
+   - the **device configuration** file (paper-and-cog icon), which downloads as
+     `iotcDeviceConfig.json` (your browser may add a number, e.g.
+     `iotcDeviceConfig (3).json`).
+3. Unzip the certificates, then copy the three files to the board **and rename
+   them** as shown. Both certificate files are already PEM — renaming the
+   `.crt` to `.pem` is all that's needed, no conversion. From your PC, in the
+   folder where you downloaded them:
+
+   Over the network:
+   ```bash
+   scp cert_<device>.crt     arduino@<board-ip>:~/iotc-tria-vision-ai-kit-robotic-arm/device-cert.pem
+   scp pk_<device>.pem       arduino@<board-ip>:~/iotc-tria-vision-ai-kit-robotic-arm/device-pkey.pem
+   scp iotcDeviceConfig.json arduino@<board-ip>:~/iotc-tria-vision-ai-kit-robotic-arm/iotcDeviceConfig.json
+   ```
+   Or over the USB-C cable (`adb` ships with Arduino App Lab):
+   ```bash
+   adb push cert_<device>.crt     /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/device-cert.pem
+   adb push pk_<device>.pem       /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/device-pkey.pem
+   adb push iotcDeviceConfig.json /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/iotcDeviceConfig.json
+   ```
+   Put quotes around a file name that contains spaces, e.g.
+   `"iotcDeviceConfig (3).json"`.
+
+#### 4d. Option B — generate the certificate on the board (quickstart script)
+
+1. Choose **Use my certificate** for the device certificate and leave the page open.
+2. On the board, from the project directory, run Avnet's quickstart script. The
+   `source board_env.sh` line matters: the script uses `python3`, and only the
+   demo's conda env has the /IOTCONNECT SDK.
+   ```bash
+   cd ~/iotc-tria-vision-ai-kit-robotic-arm
+   source board_env.sh
+   wget https://raw.githubusercontent.com/avnet-iotconnect/iotc-python-lite-sdk-demos/refs/heads/main/common/scripts/quickstart.sh && bash ./quickstart.sh
+   ```
+   It writes `device-pkey.pem` and `device-cert.pem` here and prints the certificate.
+3. Paste the printed certificate (including the `BEGIN`/`END` lines) into the
+   certificate box in the browser and click **Save and View**.
+4. Download the device configuration file (paper-and-cog icon), open it in a text
+   editor, and paste its contents into the terminal when the script asks. It is
+   saved as `iotcDeviceConfig.json`.
+5. The script also downloads a starter `app.py` — ignore it; this demo uses `main.py`.
+
+#### 4e. Check the files
+
+On the board:
+```bash
+cd ~/iotc-tria-vision-ai-kit-robotic-arm
+ls -l iotcDeviceConfig.json device-cert.pem device-pkey.pem   # all three present
+chmod 600 device-pkey.pem                                     # key readable only by you
+grep -o '"uid": *"[^"]*"' iotcDeviceConfig.json               # should show your device's Unique ID
+```
+
+All three demos then publish telemetry and accept remote commands automatically.
+If the app prints `IoTConnect device config file not found`, a file is missing or
+misnamed; if it fails to connect, check that the certificate, key and config all
+came from the same device.
 
 ---
 
@@ -752,8 +819,8 @@ affect vision or arm control when unused.
 
 ### Prerequisites
 
-Your device **must** be created in /IOTCONNECT using the `robarmwebrtc` template
-(`robarmwebrtc-template.json` in this repo). During device creation, when
+Your device **must** be created in /IOTCONNECT using the `robarmRTC` template
+(imported from `robarmwebrtc-template.json` in this repo). During device creation, when
 prompted to select a **Stream Resource**, choose **WebRTC**. This choice cannot
 be changed after device creation — if your device was created with a different
 template, create a new one.
