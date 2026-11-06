@@ -1,0 +1,845 @@
+# Arduino VENTUNO Q + /IOTCONNECT — XArm Vision Demos
+
+> [!NOTE]
+> This is the **Arduino VENTUNO Q** branch (`ventuno-q`) of the Tria VisionAI
+> Kit 6490 robotic-arm demo. The demos, arm, camera and cloud setup are the
+> same as on `main`; only the board and its software setup differ (Ubuntu
+> 24.04, the `arduino` user instead of root, Qualcomm's apt packages for the
+> NPU runtime, and the GNOME desktop instead of Weston). Board-specific paths
+> live in [board_env.sh](board_env.sh).
+
+Three independent vision-driven robotic-arm demos that all run on the same
+**Arduino VENTUNO Q** (Qualcomm Dragonwing IQ-8275 SoC, 40 TOPS Hexagon NPU)
+board and stream telemetry + accept remote commands through **/IOTCONNECT**. Each demo highlights a
+different rung of perception sophistication on the same hardware:
+
+```
+   1. ASL gesture control          MediaPipe + PointNet          CPU
+   2. HSV pick-and-place           Classical CV (OpenCV)         CPU
+   3. YOLO + depth pick-and-place  Custom YOLOv8n + MiDaS-V2    Hexagon NPU
+```
+
+The progression is the demo: same arm, same camera, same cloud platform —
+showing classical CV vs. NPU-accelerated deep learning side by side.
+
+> [!TIP]
+> If you are new to /IOTCONNECT, the [/IOTCONNECT Python Lite SDK demos](https://github.com/avnet-iotconnect/iotc-python-lite-sdk-demos)
+> are a good way to get familiar with the /IOTCONNECT UI before proceeding on to this project.
+
+---
+
+## Hardware Requirements
+
+### Board
+- **[Arduino VENTUNO Q](https://store.arduino.cc/products/ventuno-q)**
+- Power: a 5V/3A USB-C supply, or 12–24 VDC on the barrel jack
+- USB-C cable to a PC (optional — for `adb shell` access during setup)
+
+### Purchased Separately
+- **[Hiwonder xArm 1S](https://www.amazon.com/LewanSoul-Programmable-Feedback-Parameter-Programming/dp/B0CHY63V9P?th=1)** — 6-DOF arm + gripper, USB
+- Ethernet Cable
+- **USB camera** — mounted on the wrist roll servo for demos #2/#3 (eye-in-hand);
+  any operator-facing USB camera for demo #1. The reference build uses a
+  Logitech Brio 100; any UVC camera works.
+
+> [!TIP]
+> If possible, it is recommended to use a bare USB-camera PCB module mounted directly
+> behind the gripper jaws, giving the cleanest line of sight to whatever the gripper
+> is about to grab and removing the parallax that makes the camera-gripper offset
+> calibration necessary.
+
+- USB Mouse and Keyboard
+- HDMI Monitor and HDMI cable (the VENTUNO Q has a full-size HDMI port)
+- One practice ball (Nerf Rival Ammo balls work well — small, matte, compress
+  slightly inside the gripper)
+- A target drop box (any small container in a distinct color, e.g. blue) — for
+  demo #2 pickplace and demo #3
+
+---
+
+## Hardware Assembly
+
+### Hiwonder XArm 1S Robotic Arm Setup
+
+> [!NOTE]
+> It is assumed that users have purchased the pre-assembled version of the robotic
+> arm. If not, follow Hiwonder's assembly instructions first and then return here.
+
+1. Attach the included suction-cup feet to the base of the arm using the provided
+   hardware as shown below:
+
+<img src="./media/suction-cup-hardware.png">
+
+<img src="./media/suction-cup-assembled.png">
+
+2. Using a strong adhesive (epoxy works well), attach your USB camera to the top of
+   the wrist ("hand") rotational servo motor.
+
+> [!TIP]
+> Prop up the arm with a small box (see image below) and use masking tape to hold
+> the camera in position while the adhesive sets. A "helping hand" soldering arm
+> can also hold the USB cable of the camera for added stability.
+
+<img src="./media/supporting-box.png">
+
+> [!IMPORTANT]
+> Ensure no adhesive drips down into any joints or moving parts.
+
+3. After the adhesive has cured, the final camera mounting should look like this:
+
+<img src="./media/final-camera-mounted.png">
+
+### Arduino VENTUNO Q Hardware Setup
+
+- Connect ethernet cable to the board's 2.5GbE port (or use Wi-Fi)
+- Connect the HDMI monitor
+- Connect the xArm USB cable and the USB camera to the two USB-A ports. With a
+  mouse + keyboard as well, use a powered USB hub.
+- Connect power (USB-C 5V/3A, or 12–24 VDC barrel jack)
+
+---
+
+## First-Time Setup
+
+> [!NOTE]
+> These steps only need to be performed once. After completing them, see
+> [Starting the Demo](#starting-the-demo) for the commands to run after
+> every reboot.
+
+### 1. Board Bring-Up
+
+1. **Power on** and complete Arduino's first-boot screens on the HDMI monitor
+   (accept the terms, set up the `arduino` user). Until this is done the
+   desktop does not start.
+2. **Get a shell on the board**, either:
+   - from a PC over the USB-C cable: `adb shell` (`adb` ships with
+     [Arduino App Lab](https://www.arduino.cc/en/software)), or
+   - over the network, after enabling SSH once from the board's terminal:
+     ```bash
+     sudo systemctl enable --now ssh
+     ssh arduino@<board-ip>
+     ```
+
+### 2. Clone + Bootstrap
+
+Clone this branch into the `arduino` user's home and run the bootstrap
+script **as `arduino` (not root)** — it asks for the `arduino` password once
+for the system steps:
+
+```bash
+cd ~
+git clone -b ventuno-q https://github.com/avnet-iotconnect/iotc-tria-vision-ai-kit-robotic-arm.git
+cd iotc-tria-vision-ai-kit-robotic-arm
+./bootstrap-new-board.sh
+```
+
+[bootstrap-new-board.sh](bootstrap-new-board.sh) is idempotent (safe to
+re-run) and does everything the Tria image provides out of the box:
+
+| Step | What |
+|---|---|
+| NPU runtime | `apt install qairt-libs qairt-dsp-binaries` from the board's Qualcomm PPA — `/usr/lib/libQnnTFLiteDelegate.so` + the Hexagon v75 libs in `/usr/lib/dsp/cdsp` |
+| xArm access | udev rule so the `arduino` user can open the arm over USB HID |
+| Models | YOLO-X and MiDaS-V2 w8a8 from Qualcomm AI Hub into `/etc/models` (labels into `/etc/labels`) |
+| Python | Miniforge in `~/miniforge3`, conda env `iotc-ventuno-xarm` (Python 3.11 + OpenCV), `requirements.txt` + `requirements-yolo.txt` |
+| Demo files | PointNet weights (demo #1), default `camera_settings.json` |
+| Desktop | "XArm: …" launchers in the GNOME app grid (calibrate ball/box, ball demo, pick-place demo, terminal) |
+| Autostart | `robotarm.service` (runs [deploy/arm_watchdog.sh](deploy/arm_watchdog.sh) as `arduino`) — boots the app in IDLE |
+
+Check the NPU afterwards (needs the USB camera plugged in):
+```bash
+source board_env.sh && python yolo_selftest.py   # expect: NPU=YES (Hexagon HTP via QNN)
+```
+
+### 3. ASL Model Weights (Demo #1 Only)
+
+The PointNet classifier weights are not bundled in the repo. Download them once:
+
+```bash
+sh model/get_model.sh
+ls -lh model/point_net_1.pth   # should be ~38–42 MB
+```
+
+Demo #1 will refuse to start with a clear error if this file is absent.
+
+### 4. /IOTCONNECT Onboarding
+
+The board needs three files from /IOTCONNECT in the project directory
+(`~/iotc-tria-vision-ai-kit-robotic-arm`), with **exactly these names**:
+
+| File | What it is |
+|---|---|
+| `iotcDeviceConfig.json` | Device configuration (which account/device to connect as) |
+| `device-cert.pem` | Device certificate |
+| `device-pkey.pem` | Device private key — keep it secret |
+
+They are git-ignored, so they never get committed.
+
+#### 4a. Create the device template (once per account)
+
+1. Log in to [console.iotconnect.io](https://console.iotconnect.io) and go to
+   **Device → Templates → Create Template → Import**.
+2. Select [`robarmwebrtc-template.json`](robarmwebrtc-template.json) from this
+   repo. It appears in /IOTCONNECT as **`robarmRTC`**.
+
+> [!NOTE]
+> If you imported `robarmRTC` from an older copy of this repo, import it again —
+> newer versions add commands (e.g. `camera_preset`) that the dashboard uses.
+
+#### 4b. Create the device
+
+1. Go to **Device → Devices → Create Device**. Set **Unique ID** and **Device
+   Name** to the same value (e.g. `VentunoQArm`), pick your **Entity**, and
+   select the **`robarmRTC`** template.
+2. **Stream Resource:** choose **WebRTC** if you want live video (`--webrtc`).
+
+> [!IMPORTANT]
+> The Stream Resource cannot be changed after the device is created. A device
+> created without WebRTC (or with a different template) can still run every demo,
+> just not with `--webrtc` — to add video later you must create a new device.
+
+3. **Device Certificate:** choose **Auto-generated** and save the device.
+
+#### 4c. Download the credentials and copy them to the board
+
+1. On the device's page, download:
+   - the **certificates** zip (e.g. `VentunoQArm-certificates.zip`), which
+     contains `cert_<device>.crt` and `pk_<device>.pem`, and
+   - the **device configuration** file (paper-and-cog icon), which downloads as
+     `iotcDeviceConfig.json` (your browser may add a number, e.g.
+     `iotcDeviceConfig (3).json`).
+2. Unzip the certificates, then copy the three files to the board **and rename
+   them** as shown. Both certificate files are already PEM — renaming the
+   `.crt` to `.pem` is all that's needed, no conversion. From your PC, in the
+   folder where you downloaded them:
+
+   Over the network:
+   ```bash
+   scp cert_<device>.crt     arduino@<board-ip>:~/iotc-tria-vision-ai-kit-robotic-arm/device-cert.pem
+   scp pk_<device>.pem       arduino@<board-ip>:~/iotc-tria-vision-ai-kit-robotic-arm/device-pkey.pem
+   scp iotcDeviceConfig.json arduino@<board-ip>:~/iotc-tria-vision-ai-kit-robotic-arm/iotcDeviceConfig.json
+   ```
+   Or over the USB-C cable (`adb` ships with Arduino App Lab):
+   ```bash
+   adb push cert_<device>.crt     /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/device-cert.pem
+   adb push pk_<device>.pem       /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/device-pkey.pem
+   adb push iotcDeviceConfig.json /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/iotcDeviceConfig.json
+   ```
+   Put quotes around a file name that contains spaces, e.g.
+   `"iotcDeviceConfig (3).json"`.
+
+#### 4d. Check the files
+
+On the board:
+```bash
+cd ~/iotc-tria-vision-ai-kit-robotic-arm
+ls -l iotcDeviceConfig.json device-cert.pem device-pkey.pem   # all three present
+chmod 600 device-pkey.pem                                     # key readable only by you
+grep -o '"uid": *"[^"]*"' iotcDeviceConfig.json               # should show your device's Unique ID
+```
+
+All three demos then publish telemetry and accept remote commands automatically.
+If the app prints `IoTConnect device config file not found`, a file is missing or
+misnamed; if it fails to connect, check that the certificate, key and config all
+came from the same device.
+
+---
+
+## Starting the Demo
+
+After the board has been set up and rebooted, run these commands each time to
+start the demo:
+
+The bootstrap installs `robotarm.service`, which starts the app in IDLE on
+every boot (arm still, cloud connected) — start/stop movement from the
+dashboard with `set_mode`. To run it by hand instead:
+
+1. **Get a shell on the board** (`ssh arduino@<board-ip>` or `adb shell`) and
+   pause the autostart supervisor so it doesn't fight you for the arm:
+   ```bash
+   touch /tmp/demo_watchdog_off && pkill -f 'python -u main.py'
+   ```
+
+2. **Launch** ([start.sh](start.sh) activates the conda env and NPU paths
+   from [board_env.sh](board_env.sh)):
+   ```bash
+   cd ~/iotc-tria-vision-ai-kit-robotic-arm
+   ./start.sh --webrtc
+   ```
+
+   > [!NOTE]
+   > From SSH/adb the preview window only reaches the HDMI monitor through
+   > the desktop session — use `./launch_gui.sh ball` (etc.), or the
+   > "XArm: …" launchers on the desktop. Resume autostart with
+   > `rm /tmp/demo_watchdog_off`.
+
+   > [!NOTE]
+   > If running over SSH with no monitor connected, add `--headless` to suppress
+   > the camera preview window:
+   > ```bash
+   > ./start.sh --webrtc --headless
+   > ```
+
+   > [!NOTE]
+   > `--webrtc` enables live video streaming to the /IOTCONNECT portal. To run a
+   > specific demo mode, add `--mode <name>` (e.g. `--mode asl`, `--mode ball`,
+   > `--mode yolo-pickplace`). Default is `asl`.
+
+---
+
+## Demo 1 — ASL Gesture Control (`--mode asl`)
+
+**Value prop.** Natural human–robot interaction. The operator stands in front of
+the camera and signs single-handed ASL letters; the arm responds in real-time.
+Demonstrates **on-board hand tracking (MediaPipe) + landmark classification
+(PointNet)** with no per-site calibration once the model weights are downloaded.
+
+**Best for:** showing the kit running a useful, end-user-facing AI experience
+with no labelled data and no per-site calibration.
+
+### Camera Setup
+
+**Placement.** Use any operator-facing USB UVC camera — not the wrist-mount used
+by demos #2 and #3. The wrist-mounted Brio can double as the operator-facing
+camera if you re-mount it; a second USB webcam at a typical monitor-top position
+also works.
+
+- Distance: 1.5–3 feet from the signing hand.
+- Height: shoulder-to-chest level gives the best hand-to-background contrast.
+  Avoid angles that put bright ceiling lights directly behind the hand.
+- Frame fill: the hand should occupy roughly ¼–⅓ of the frame. MediaPipe Hands
+  performs best when the hand is large and centered, not a small blob in a corner.
+
+**Lighting.** Even, diffuse front-lighting works best. Avoid strong backlighting
+(operator in front of a bright window) — the hand goes silhouette and MediaPipe
+loses landmarks. A neutral, low-clutter background helps recognition.
+
+**Camera index.** The app auto-detects the Brio 100 by kernel device name. For
+a different camera, find its index with `v4l2-ctl --list-devices` and pass it
+explicitly:
+```bash
+./start.sh --mode asl --camera N
+```
+
+### Running the Demo
+
+```bash
+./start.sh --mode asl                                        # local monitor
+python3 main.py --mode asl --headless --web-port 8080        # over SSH
+```
+
+Watch the live stream at `http://<board-ip>:8080/` if running `--web-port`.
+
+**Startup sequence:**
+1. App connects to the xArm and moves to the home/center pose.
+2. /IOTCONNECT connects (if certs are in the project root).
+3. PointNet loads from `model/point_net_1.pth` (~2–3 seconds).
+4. Camera loop starts. The OSD is blank until a hand appears.
+
+**On-screen overlay:**
+- `LEFT=<letter>` (top-left, green) — left hand detected, letter classified
+- `RIGHT=<letter>` (top-right, red) — right hand detected, letter classified
+- `[<action label>]` below the letter — the arm command that will fire
+- Hand skeleton wireframe drawn over the detected landmarks
+
+**Gesture mechanic.** A command fires each time the recognized sign **changes**
+— not on every frame. This prevents a held gesture from flooding the arm with
+repeat commands. To repeat the same action: briefly drop the hand out of frame
+(or form a different sign), then re-sign.
+
+**Model coverage.** The PointNet model classifies 24 static ASL letters (A–Y,
+excluding J and Z which require motion). Every frame is classified into one of
+these 24 letters — only the mapped letters in the table below trigger arm
+commands. Unmapped letters appear in the overlay without an action label.
+
+### Gesture Mapping
+
+| Hand | Sign | Arm Action |
+|------|------|------------|
+| Left | A | Advance (move forward) |
+| Left | B | Back up (move backward) |
+| Left | L | Left (shoulder pan) |
+| Left | R | Right (shoulder pan) |
+| Left | U | Up (raise) |
+| Left | Y | Down (lower) |
+| Left | H | Home (all servos to center) |
+| Right | A | Close gripper |
+| Right | B | Open gripper |
+
+All other recognized letters display in the overlay but produce no arm action.
+
+> **Direction note.** The physical direction of Advance/Backup/Left/Right depends
+> on how the arm is mounted. If the arm moves the wrong way, adjust
+> `LEFT_GESTURE_TO_ACTION` in `modes/asl.py` (swap `'advance'`/`'backup'` or
+> `'left'`/`'right'`).
+
+### Telemetry — ASL
+
+Sent on every gesture-triggered arm action and every 2 seconds while running.
+
+| Field | Description |
+|-------|-------------|
+| `state` | `"ASL-Gesture"` (constant) |
+| `gripper`, `wrist_roll`, `wrist_flex`, `elbow_flex`, `shoulder_lift`, `shoulder_pan` | Servo positions (0–1000 units) |
+| `sysInfo_cpu` | CPU usage + temperature |
+| `sysInfo_memory` | RAM usage + temperature |
+| `sysInfo_storage` | Disk usage |
+| `sysInfo_gpu` | Adreno GPU % (near zero — workload is on CPU) |
+
+If fields are missing from the /IOTCONNECT dashboard, verify they are declared on
+the device template — the broker silently drops undeclared attributes.
+
+---
+
+## Demo 2 — HSV Pick-and-Place (`--mode ball` / `--mode pickplace`)
+
+**Value prop.** Fully autonomous pick-and-drop using **purely classical computer
+vision** — HSV color thresholding, contour analysis, and a proportional
+visual-servo controller. No machine learning, no NPU. Runs fast on CPU, fully
+deterministic, easy to debug, and works on any board with OpenCV.
+
+Two flavors:
+- `--mode ball` — ball-follow + grab + return home (no drop phase)
+- `--mode pickplace` — find the drop box, grab the ball, drop it in the box
+
+**Best for:** a clean baseline showing that classical CV is still viable for
+known-color, controlled-lighting tasks — and making the NPU comparison in
+demo #3 meaningful.
+
+**Trade-off:** brittle to lighting changes; requires per-site color
+recalibration; can't distinguish a colored ball from a similarly-colored
+backdrop.
+
+> [!NOTE]
+> This demo is intended to showcase the potential capabilities of the Arduino
+> VENTUNO Q in conjunction with robotics and /IOTCONNECT. The consistency of success
+> with the ball-follow demo is reliant on camera angle and positioning, lighting,
+> calibration, ball position, and surface/room colors. If your setup cannot
+> reliably pick up the target ball, tweak the code and calibration sequences until
+> successful.
+
+### One-Time Calibration (Per Site / Per Ball / Per Lighting)
+
+Three pieces of calibration data are required. Capture them in order — each
+step writes a JSON file the next may depend on.
+
+> **Safety note.** All calibration scripts release all six servo torques so you
+> can free-pose the arm to aim the wrist camera. **Always support the arm before
+> pressing Enter**, especially on a wall- or ceiling-mounted arm.
+
+#### 2a. Ball HSV Thresholds — `ball_calibrate.py`
+
+Captures the HSV thresholds used for ball segmentation.
+
+> [!IMPORTANT]
+> This script opens an interactive preview window that requires a physical display,
+> mouse, and keyboard connected directly to the board. It cannot be run over SSH.
+> Connect an HDMI monitor, USB mouse, and USB keyboard before running.
+
+```bash
+./calibrate.sh
+# or:
+python3 ball_calibrate.py [--camera N]
+```
+
+1. Hold the arm, Enter → torque drops.
+2. Click the ball in the live preview. Each click samples a 7×7 HSV patch and
+   widens the mask range. The overlay shows what the detector will see.
+3. `h` = re-engage torque at current pose; `w` = release again to re-aim.
+4. `s` = save → writes `ball_color.json`. `r` = reset samples. `q`/ESC = quit without saving.
+
+> **Tip for white/grey balls:** hue is automatically set to the full range when
+> average saturation is below 60. Click 5–10 spots across the ball surface
+> including any slightly shadowed areas.
+
+#### 2b. Scan Poses — `teach_pose.py`
+
+Captures the arm poses cycled through during `SCANNING`. Torque is dropped so
+you can pose the arm by hand.
+
+```bash
+./teach.sh
+# or:
+python3 teach_pose.py
+```
+
+1. Hold the arm, Enter → torque drops.
+2. Pose the arm at each of the six positions as prompted. You teach two rows —
+   **near** (close to the base) and **far** (maximum comfortable reach) — at
+   three pan positions each (left, center, right). The script automatically
+   interpolates a third **mid** row halfway between them.
+
+   > [!IMPORTANT]
+   > The scan poses are **search positions only**, not grab positions. For each
+   > pose, orient the wrist camera **downward so it has a clear view of the table
+   > surface** in that region. Keep the gripper well above the table — once a ball
+   > is detected and centered, the grab snap will lower the arm automatically.
+
+3. Press `s` + Enter to snapshot each pose. The script prints the servo values
+   and tells you which pose to move to next.
+4. Press `h` + Enter to re-enable torque while repositioning, then `r` + Enter
+   to release torque again before posing.
+5. After all six poses are saved the script automatically updates `SCAN_POSES` in
+   `modes/ball_follow.py`.
+
+#### 2c. Drop Box HSV Thresholds — `ball_calibrate.py` (Pickplace Only)
+
+```bash
+python3 ball_calibrate.py --output box_color.json [--camera N]
+```
+
+Same UI as ball-color calibration. Click on the drop box in the live preview.
+The pickplace mode reads `box_color.json` to find and approach the drop target.
+
+#### 2d. Camera-Gripper Calibration — `calibrate_offset` (View Pose + Grab Reach + Grab Depth)
+
+Every camera mount is a little different, so this one calibration teaches the
+arm everything about **your** camera position:
+
+- **View pose** — where tracking should stop: the gripper just above/behind
+  the ball with the ball fully in view. Saves where the ball sits in the image
+  and how big it looks.
+- **Grab reach** (optional) — the joint move from the view pose to the pose
+  where the open jaws are around the ball. Use it when the camera **can't see
+  the ball once it is between the jaws**: the arm stops at the view pose,
+  makes this move without the camera, then closes the gripper.
+- **Grab depth** (YOLO demo) — how close the depth model says the ball is at
+  the view pose; sets the YOLO grab threshold. Taught automatically by the
+  view-pose snapshot when the YOLO models are installed.
+
+Needs `ball_color.json` from step 2a first. Send `calibrate_offset` from the /IOTCONNECT dashboard (or run
+`./calibrate_offset.sh` with the demo stopped), then open
+`http://<board-ip>:8000/`:
+
+1. **Support the arm** — torque drops when the calibrator starts.
+2. Place the ball on the table. Pose the arm at the **view pose**: gripper just
+   above/behind the ball, ball fully in the camera view (green circle). Keep
+   holding the arm (torque off) and click **1. Snapshot view pose**.
+3. **Without moving the ball**, move the arm so the open jaws are around it, at
+   the height they should close. The camera doesn't need to see the ball. Click
+   **2. Snapshot grab pose**.
+   - Skip this step if the ball stays in view between the jaws — the gripper
+     then closes right at the view pose.
+4. Click **Hold pose**, then **Quit**.
+
+Results are saved to `cam_gripper_offset.json` and used by the `ball`,
+`pickplace` and `yolo-*` modes the next time they start. Redoing step 1
+clears the grab reach (it is measured from the view pose), so always redo
+step 2 after it.
+
+> [!NOTE]
+> **YOLO demo:** when the YOLO and MiDaS models are installed (the bootstrap
+> installs them), the step 1 snapshot also teaches the YOLO **grab depth** —
+> how close the depth model says the ball is at the view pose — and sets the
+> grab gate's depth threshold from it. The calibrator shows `YOLO r=… depth D=…`
+> at the bottom of the video; it needs the YOLO model to see the ball too.
+> Keep holding the arm with torque **off** for the snapshot.
+
+### Running the Demo
+
+```bash
+# Ball-follow only (no drop phase):
+./start.sh --mode ball
+python3 main.py --mode ball --headless --web-port 8080
+
+# Pick-and-place (find box, grab, drop):
+./start.sh --mode pickplace
+python3 main.py --mode pickplace --headless --web-port 8080
+```
+
+Watch the live stream at `http://<board-ip>:8080/` if running `--web-port`.
+
+The arm homes, then enters SCANNING. Drop the ball anywhere in the scan
+envelope. The arm centers on it, descends until the apparent radius matches
+the grab-distance target, closes the gripper, and either returns home (ball
+mode) or carries the ball to the taught box position and releases (pickplace
+mode). Open the gripper manually or via the `open_gripper` cloud command to
+re-arm the cycle.
+
+### State Machine
+
+| State | What It Does | Exit |
+|-------|-------------|------|
+| `IDLE` | Initial state at launch. Falls through immediately. | → `SCANNING` |
+| `SCANNING` | Cycles through `SCAN_POSES` so the camera sweeps the workspace. | Ball detected → `TRACKING` |
+| `TRACKING` | P-controller drives `shoulder_pan` + `wrist_flex` to center the ball. | Centered + radius OK → `GRABBING`; ball lost > grace window → `SCANNING` |
+| `GRABBING` | Closes the gripper, watches for stall against the ball, then lifts. | → `HOLDING` |
+| `HOLDING` | Returns to home (gripper closed) and waits for operator to open it. | Gripper opened → `IDLE` |
+
+`NO_BALL_GRACE_FRAMES` (~5 s at 6 fps) lets the arm hold its pose during brief
+detection drop-outs from clipping or HSV flicker, instead of bouncing back to
+SCAN every time the ball flickers off for a frame.
+
+### Key Tuning Constants (`modes/ball_follow.py`)
+
+| Constant | Default | Notes |
+|----------|---------|-------|
+| `PAN_GAIN`, `TILT_GAIN` | — | Servo units commanded per pixel of error. `TILT_GAIN` is higher because wrist_flex fights gravity at extended poses. |
+| `PAN_DIR`, `TILT_DIR` | — | Sign flips. Determined by live test — flip from `+1` to `-1` if the arm moves away from the ball instead of toward it. |
+| `MIN_TRIM_STEP` | 14 | Floor on non-zero wrist_flex trims. Bus servos silently ignore small commands (static friction); with the camera + gripper loading the wrist, 8 units didn't move it at all. |
+| `MIN_TRIM_STEP_PAN` | 18 | Higher floor for shoulder_pan — it carries the entire forearm + wrist + camera, so its static-friction floor is roughly 2× the wrist's. |
+| `APPROACH_STEP` | 0 | Per-frame shoulder_lift step during descent. Disabled in table-mount build — the grab snap handles height directly. |
+| `MAX_STEP` | 25 | Hard cap on any single-frame servo delta — keeps a large pixel error from snapping the arm. |
+| `MOVE_DURATION_MS` | 220 | How long each per-frame move takes. Too short = small commands ignored; too long = loop rate drops. |
+| `CENTER_DEADBAND_PX` | 60 | Pixel error inside which the controller stops trimming. Must be ≥ `MIN_TRIM_STEP_PAN × pixels/unit` or the controller will oscillate. |
+| `TARGET_RADIUS_PX`, `RADIUS_TOLERANCE` | — | Apparent ball radius (px) meaning "close enough to grab". Tune for your ball + grab height. |
+| `CAM_GRIPPER_OFFSET_X/Y` | 0/0 | Fallback aim-point shift in pixels. Normally comes from `cam_gripper_offset.json` (the `calibrate_offset` view pose), which overrides these, along with `TARGET_RADIUS_PX`. |
+| `GRAB_REACH_MS` | 1200 | Duration of the taught blind move from the view pose to the grab pose (only used when a grab reach is calibrated). |
+| `LIFT_MAX`, `ELBOW_MAX` | — | Safety ceilings during approach so a never-satisfied radius check can't drive the gripper into the table. |
+| `NO_BALL_GRACE_FRAMES` | — | Consecutive lost-ball frames before falling back to SCANNING. |
+| `SCAN_POSES` | — | Poses cycled while searching. Captured with `teach_pose.py`. |
+
+> **Warning:** `PAN_GAIN`, `TILT_GAIN`, and `MAX_STEP` all scale implicitly with
+> camera/loop frame rate — if you change resolution or drop the preview, expect to
+> re-tune.
+
+### Telemetry — HSV
+
+Each payload (sent every ~2 s) carries:
+
+| Field | Description |
+|-------|-------------|
+| `state` | `IDLE` / `SCANNING` / `TRACKING` / `GRABBING` / `HOLDING` |
+| `ballTrack.ball_x`, `ball_y`, `ball_r` | Last detected pixel position + radius (0 if not seen) |
+| `ballTrack.pan_err`, `tilt_err` | Current centering error in pixels |
+| `ballTrack.radius_err` | Apparent-radius error from `TARGET_RADIUS_PX` |
+| `ballTrack.velocity_x`, `velocity_y` | Recent ball motion (px/frame) |
+| `ballTrack.d_pan`, `d_tilt`, `d_lift`, `d_elbow` | Last commanded servo deltas |
+| `ballTrack.is_prediction` | 1 if current bbox is extrapolated, not detected |
+| `ballTrack.no_ball_frames` | Consecutive frames without a detection |
+
+### /IOTCONNECT Dashboard
+
+<img src="./media/dashboard.png">
+
+To monitor and control your Arduino VENTUNO Q Robotic Arm demo with an
+interactive dashboard in /IOTCONNECT:
+
+1. Download the [provided dashboard template](robotic_arm_dashboard_export.json)
+   from this repo.
+2. Click **"Create Dashboard"** in the toolbar at the top of the /IOTCONNECT UI.
+3. Select **"Import Dashboard"** and browse to select the downloaded template.
+4. Choose `robarmRTC` for the Device Template and then choose your device's
+   unique ID for the Device.
+5. Name your dashboard as desired.
+6. Click **"Save"**.
+7. If desired, move or add widgets in the Dashboard Editor screen, then click
+   **"Save"** when complete.
+8. Use the control buttons in the dashboard to send commands to the arm — adjust
+   individual servos, or send complex demo commands (the buttons with green font
+   labels along the bottom) to have the arm complete a series of fluid movements.
+
+---
+
+## Demo 3 — YOLO + Depth Pick-and-Place (`--mode yolo-pickplace`)
+
+**Value prop.** The HSV demo, but with **two neural networks running concurrently
+on the Hexagon NPU**:
+
+- **YOLOv8n** (custom-trained on the actual ball) replaces the HSV color filter.
+  Robust to lighting, partial occlusion, and similar-color backgrounds.
+- **MiDaS-V2 monocular depth** replaces the pixel-radius distance proxy. The grab
+  gate fires on real relative distance — independent of ball size or camera focus.
+
+Combined NPU load: **~7 ms YOLO + ~5 ms depth per frame** through the QNN TFLite
+delegate, leaving the CPU free for the control loop. Live latency, fps, and depth
+values stream to /IOTCONNECT as telemetry.
+
+**Best for:** showing the IQ-8275 Hexagon NPU doing real, useful AI work that the
+CPU-only demo can't — with side-by-side comparison via demo #2.
+
+**Trade-off:** the grab depth must be re-taught at each new site (MiDaS depth
+values are scene-specific) — part of `calibrate_offset`. Also requires a captured + labelled dataset and one-time INT8
+TFLite conversion for a custom YOLO model (see
+[`CUSTOM_NPU_DETECTOR.md`](CUSTOM_NPU_DETECTOR.md)).
+
+### Per-Site Re-Teaching
+
+Same ball + same arm + new room = a few things need re-teaching. MiDaS depth
+values, HSV thresholds for the drop box, and arm-relative scene geometry are all
+site-dependent.
+
+| File | Required? | Command |
+|------|-----------|---------|
+| `grab_depth.json` (+ `cam_gripper_offset.json`) | **Required at every new site** | `calibrate_offset` (cloud), both steps |
+| `drop_pose.json` | Only if drop target moved | Send `release_torque`, hand-pose arm, then `hold_pose` + `teach_drop_pose` from cloud |
+| `scan_poses.json` | Only if ball staging area moved | `python3 teach_pose.py` |
+| `box_color.json` | Only if drop box or lighting changed | `python3 ball_calibrate.py --output box_color.json --camera N` |
+| `camera_settings.json` | Only if lighting is very different | Send `camera_setting wb_temperature auto` to re-measure white balance for the new room, then redo `calibrate_ball` / `calibrate_box` |
+
+#### Re-Teaching at a New Site
+
+MiDaS depth values are scene-specific — the same pose can read 100+ units
+differently in a different room or light. At a new site, redo
+`calibrate_offset` (both steps, see [2d](#2d-camera-gripper-calibration--calibrate_offset-view-pose--grab-reach--grab-depth)):
+the step 1 snapshot re-teaches the grab depth and resets the grab threshold.
+Check the result with `calibrate grab_depth show`; override the threshold by
+hand with `calibrate grab_depth <D>`.
+
+### Running the Demo
+
+**Option A — unified launcher (recommended, opinionated defaults):**
+```bash
+./start.sh --mode yolo-pickplace --web-port 8080 2>&1 | tee /tmp/yolo.log
+./start.sh --mode yolo-ball --web-port 8080          # ball-follow only
+```
+
+**Option B — full CLI control (override model, conf, camera, depth):**
+```bash
+./start_yolo.sh --model model/ball_best.tflite --depth --conf 0.7 \
+                --camera N --headless --web-port 8080 \
+                2>&1 | tee /tmp/yolo.log
+```
+
+Open `http://<board-ip>:8080/` to watch the live annotated stream. Over SSH
+the demo auto-detects there's no display and runs headless automatically.
+
+**Defaults applied by the unified launcher:**
+
+| Setting | Value |
+|---------|-------|
+| Model | `model/ball_best.tflite` (falls back to `/etc/models/yolox_quantized.tflite`) |
+| Confidence | 0.7 for custom model, 0.25 for stock YOLO-X |
+| Depth | Enabled if `/etc/models/midas_quantized.tflite` is present |
+| Depth gate | Armed if `grab_depth.json` exists; else legacy radius gate |
+
+**Expected startup log:**
+```
+[yolo] model=ball_best.tflite format=yolov8 nc=1 in=640x640 float32
+       NPU=YES (Hexagon HTP via QNN)
+[depth] model=midas_quantized.tflite in=256x256 uint8
+        NPU=YES (Hexagon HTP via QNN)
+[yolo-ball] depth gate ARMED: D_grab=... +/-...
+[yolo-pickplace] entering BALL_PHASE...
+```
+
+**Live overlay during a pick:**
+```
+r=152 dx=+4 dy=-122                              ← YOLO bbox + pan/tilt error
+center=OK  settle 2/3  (D >= 829, target 860)    ← gate state
+D=860 (raw 884)  higher=closer                   ← smoothed and raw depth
+NPU: yolo=7.2ms  depth=4.8ms  14 fps             ← live inference perf
+```
+
+The grab fires when `center=OK` AND settle reaches 3/3 (`DEPTH_SETTLE_FRAMES`
+consecutive in-window frames). Closer-than-taught still counts as OK — the gate
+is a floor, not a window.
+
+### Control-Loop Tuning (`modes/yolo_pickplace.py`)
+
+| Constant | Default | Notes |
+|----------|---------|-------|
+| `PAN_COOLDOWN_MS` | 250 | Minimum gap between shoulder_pan corrections. |
+| `CENTERED_LATCH_FRAMES` | 0 | Latch `centered_ok` for N frames after first becoming true. |
+| `DEPTH_SETTLE_FRAMES` | 3 | Consecutive in-window depth_ok frames before firing the grab. |
+| `D_EWMA_ALPHA` | 0.25 | EWMA smoothing factor for MiDaS depth. Higher → more responsive; lower → heavier smoothing. |
+| `DEPTH_TOL_FLOOR` | 20 | Minimum effective gate tolerance — protects against pathologically tight teach captures. |
+| `DEPTH_TOL_MULT` | 1.5 | Tolerance multiplier: effective tolerance = `max(FLOOR, MULT × D_stdev_from_teach)`. |
+
+### Telemetry — YOLO
+
+Each `ballTrack` payload (~2 s) carries all HSV-mode fields plus:
+
+| Field | Description |
+|-------|-------------|
+| `state` | `BALL_PHASE` / `BOX_PHASE` / `SCANNING` / `TRACKING` / `GRABBING` / `HOLDING` |
+| `yolo_ms` | Live YOLO inference time on Hexagon HTP |
+| `depth_ms` | Live MiDaS inference time on Hexagon HTP |
+| `npu_fps` | Effective end-to-end frame rate |
+| `depth_at_ball` | Raw D at the ball (single frame) |
+| `depth_at_ball_smoothed` | EWMA-smoothed D (what the control law uses) |
+| `depth_settle` | Consecutive in-window depth_ok frames (0–3) |
+| `D_grab` | Currently-loaded teach value |
+| `D_tolerance` | Effective gate width |
+
+Note: `sysInfo_gpu` will stay near zero — the workload is on the Hexagon NPU,
+not the Adreno graphics GPU. NPU activity is visible through `yolo_ms` and
+`depth_ms`.
+
+---
+
+## Remote Commands (All Modes)
+
+These commands work via /IOTCONNECT regardless of which demo is running:
+
+| Command | Effect |
+|---------|--------|
+| `home` | Return arm to safe centered pose |
+| `open_gripper` | Open the gripper |
+| `close_gripper` | Close the gripper |
+| `advance` / `backup` | Move arm forward / backward |
+| `left` / `right` | Move arm laterally |
+| `up` / `down` | Move arm vertically |
+| `set_mode mode=<name>` | Switch active demo without restarting (`asl`, `ball`, `pickplace`, `yolo-ball`, `yolo-pickplace`) |
+| `set_mode mode=idle` | Stop the running demo; arm + cloud stay connected |
+| `calibrate target=<name>` | Launch a browser-UI calibrator (`ball`, `box`, `offset`) — open `http://<board-ip>:8000/`. `grab_depth` opens the same calibrator as `offset` (grab depth is taught by its step 1). |
+| `calibrate grab_depth <D>` | Set the YOLO grab-gate depth floor D directly (e.g. `calibrate grab_depth 650`) — applied live, persisted to `grab_threshold.json`. `calibrate grab_depth show` reads it back. Same via `calibrate_grab_depth <D>`. |
+| `release_torque` | Drop all servo torques for hand-posing. If a demo is running, it is stopped first (back to IDLE). Support the arm — and catch a held ball — before sending. |
+| `hold_pose` | Re-engage torque at the current pose |
+| `teach_scan_pose name=<n>` | Snapshot current arm pose into a named scan slot |
+| `camera_setting <name> <value>` | Update a camera setting live (exposure, saturation, etc.) |
+| `camera_setting wb_temperature auto` | Re-measure white balance for the current lighting and lock it (fixes an orange or blue tint) |
+| `camera_settings_show` / `camera_settings_reset` | Show the current camera settings / wipe them back to camera defaults |
+| `camera_preset <name>` | Apply a whole camera preset live: `normal`, `bright`, `dim`, `vivid`, `warm`, `cool`, `auto` (or one you saved) |
+| `camera_preset_save <name>` | Save the current camera settings as a named preset (tune with `camera_setting`, then keep it as a button) |
+| `camera_presets_show` | List all presets and their values |
+
+---
+
+## Live WebRTC Video Streaming (Optional)
+
+Any demo can stream the wrist-camera feed live to the /IOTCONNECT portal using
+AWS Kinesis Video Streams (KVS) WebRTC. This is entirely opt-in and does not
+affect vision or arm control when unused.
+
+### Prerequisites
+
+Your device **must** be created in /IOTCONNECT using the `robarmRTC` template
+(imported from `robarmwebrtc-template.json` in this repo). During device creation, when
+prompted to select a **Stream Resource**, choose **WebRTC**. This choice cannot
+be changed after device creation — if your device was created with a different
+template, create a new one.
+
+### Enabling WebRTC Streaming
+
+Add the `--webrtc` flag when launching any demo:
+
+```bash
+python3 main.py --mode ball --webrtc
+# or headless over SSH:
+python3 main.py --mode asl --webrtc --headless
+```
+
+When connected, the stream appears in the /IOTCONNECT portal under your device's
+live view. The wrist-camera feed updates at ~15 fps independent of the main
+vision loop so arm moves don't stall the stream.
+
+---
+
+## Custom NPU Detector — End-to-End Reproduction
+
+[`CUSTOM_NPU_DETECTOR.md`](CUSTOM_NPU_DETECTOR.md) covers the full pipeline for
+retraining the YOLO model from scratch on your own ball: image capture on the
+board, HSV auto-labelling, labelImg review, train/val split, Colab YOLOv8n
+training, INT8 TFLite export, and NPU deployment. Start there if the bundled
+model doesn't recognize your specific ball.
+
+---
+
+## References
+
+### Arduino VENTUNO Q
+- [Arduino VENTUNO Q Product Page](https://store.arduino.cc/products/ventuno-q) — Hardware specifications and purchase information
+- [Qualcomm Dragonwing Ubuntu — LiteRT on the NPU](https://dragonwingdocs.qualcomm.com/Ubuntu/ai-workflows/lite-rt) — TFLite + QNN delegate setup this branch follows
+- [Qualcomm AI Hub models](https://aihub.qualcomm.com/iot/models/) — source of the YOLO-X / MiDaS-V2 w8a8 models
+- `main` branch of this repo — the original Tria VisionAI Kit 6490 version
+
+### /IOTCONNECT
+- [/IOTCONNECT Python SDK](https://github.com/avnet-iotconnect/avnet-iotconnect-python-sdk) — /IOTCONNECT Python SDK for cloud connectivity
+- [/IOTCONNECT Device Onboarding](https://github.com/avnet-iotconnect/iotc-python-lite-sdk-demos/blob/main/common/general-guides/UI-ONBOARD.md) — Step-by-step device registration guide
+- [/IOTCONNECT Platform](https://www.iotconnect.io/) — Enterprise IoT platform information
+
+### Robotics & AI
+- [xArm Python Library](https://github.com/xArm-Developer/xArm-Python-SDK) — Official Python SDK for Hiwonder XArm robotic arms
+- [ASL MediaPipe + PointNet](https://github.com/AlbertaBeef/asl_mediapipe_pointnet) — ASL gesture recognition using MediaPipe and PointNet
+- [Qualcomm AI Hub](https://aihub.qualcomm.com) — Source of the bundled YOLO-X, MiDaS-V2, and other Hexagon-optimized models on this board

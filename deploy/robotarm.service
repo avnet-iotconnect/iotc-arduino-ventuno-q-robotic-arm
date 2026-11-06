@@ -1,0 +1,20 @@
+[Unit]
+Description=Robotic Arm pick-and-place demo (idle-start, auto-recover)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The VENTUNO Q runs the demo as the board's `arduino` user (not root as on the
+# Tria): that user is in the video, dialout and fastrpc groups, and owns the
+# HDMI desktop session. bootstrap-new-board.sh rewrites these paths if the repo
+# lives somewhere other than /home/arduino/iotc-tria-vision-ai-kit-robotic-arm.
+User=arduino
+Environment=PATH=/usr/bin:/bin:/usr/sbin:/sbin
+Environment=HOME=/home/arduino
+ExecStart=/bin/sh /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/deploy/arm_watchdog.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
