@@ -77,6 +77,7 @@ ELBOW_MAX = 500            # elbow_flex ceiling during approach
 # calibrate_offset grab reach and the scan poses. A limit never moves a joint
 # backwards, only stops it.
 APPROACH_REACH = 250       # how far past the calibrated view pose the shoulder may reach
+REACH_MARGIN = 100         # ... and the elbow, when reaching means bending it further
 SCAN_DWELL_S = 1.5         # hold each scan pose this long before advancing
 SCAN_MOVE_MS = 2500        # duration for the move between scan poses (slowed so right-pose lift=635 doesn't plunge toward table)
 NO_BALL_GRACE_FRAMES = 30  # ~5s at 6 fps — hold pose when ball briefly disappears (clipping, HSV flicker) instead of bouncing back to scan; the scan re-entry was producing the visible "shaking" between brief-track and scan-move every time detection flickered
