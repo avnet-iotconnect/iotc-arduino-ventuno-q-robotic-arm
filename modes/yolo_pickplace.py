@@ -369,7 +369,8 @@ class YoloBallFollowMode(BallFollowMode):
 
         if not is_prediction and centered_latched and grab_gate_ok:
             self.state = "GRABBING"
-            self._log("GRAB: centered and at distance — closing gripper")
+            self._log(f"GRAB: centered and at distance — r={int(br)} (taught {self.target_radius_px}) "
+                      f"D={D if D is None else round(D)} dx={pan_err:+d} dy={tilt_err:+d} — closing gripper")
             self.state = "HOLDING" if self._do_grab(arm) else "TRACKING"
             try:
                 send_telemetry(arm, extras={"ballTrack": self.telemetry()}, positions=pos)

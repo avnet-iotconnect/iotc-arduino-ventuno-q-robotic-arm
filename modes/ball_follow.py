@@ -20,6 +20,8 @@ import cv2
 import numpy as np
 from xarm import Servo
 
+import arm_kinematics
+
 from .base import Mode
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ball_color.json")
@@ -183,6 +185,7 @@ class ApproachPlan:
         lifts = [int(p) for pose in scan_poses for sid, p in pose if sid == SERVO_SHOULDER_LIFT]
         elbows = [int(p) for pose in scan_poses for sid, p in pose if sid == SERVO_ELBOW_FLEX]
         scan_elbow = elbows[0] if elbows else 300
+        self.mirrored = scan_elbow > self.STRAIGHT   # elbow bends the other way to the Tria's
         reach = grab_reach or {}
         r_lift = int(reach.get(SERVO_SHOULDER_LIFT, reach.get(str(SERVO_SHOULDER_LIFT), 0)) or 0)
         r_elbow = int(reach.get(SERVO_ELBOW_FLEX, reach.get(str(SERVO_ELBOW_FLEX), 0)) or 0)
@@ -343,7 +346,8 @@ class BallFollowMode(Mode):
         self.target_radius_px = int(ofs.get('target_radius_px', TARGET_RADIUS_PX))
         self.radius_tol = radius_tolerance(self.target_radius_px)
         self.grab_reach = cam_gripper_offset_store.load_reach()
-        self.approach = ApproachPlan(self.scan_poses, ofs.get('view_pose'), self.grab_reach)
+        self.view_pose = ofs.get('view_pose')
+        self.approach = ApproachPlan(self.scan_poses, self.view_pose, self.grab_reach)
         print(f"[ball] {self.approach.describe()}")
         if ofs:
             print(f"[ball] cam-gripper calibration: offset=({self.offset_x:+d},{self.offset_y:+d}) "
@@ -517,7 +521,8 @@ class BallFollowMode(Mode):
         # never close the gripper on a predicted position.
         if not is_prediction and centered_ok and radius_ok:
             self.state = "GRABBING"
-            self._log("GRAB: centered and at distance — closing gripper")
+            self._log(f"GRAB: centered and at distance — r={int(br)} (taught {self.target_radius_px}) "
+                      f"dx={pan_err:+d} dy={tilt_err:+d} — closing gripper")
             self.state = "HOLDING" if self._do_grab(arm) else "TRACKING"
             try:
                 send_telemetry(arm, extras={"ballTrack": self.telemetry()}, positions=pos)
@@ -725,15 +730,31 @@ class BallFollowMode(Mode):
         out to it, or None when no reach is taught / the pose can't be read."""
         if not self.grab_reach:
             return None
+        servos = set(self.grab_reach) | set(arm_kinematics.CHAIN)
         try:
-            here = {sid: int(arm.getPosition(sid)) for sid in self.grab_reach}
+            here = {sid: int(arm.getPosition(sid)) for sid in servos}
         except Exception as e:
             print(f"[ball] reach skipped — position read failed: {e}")
             return None
-        target = [[sid, _clamp(here[sid] + d)] for sid, d in self.grab_reach.items()]
-        print(f"[ball] reaching to grab pose: {here} -> {dict(target)}")
-        arm.setPosition(target, duration=GRAB_REACH_MS, wait=True)
-        return [[sid, pos] for sid, pos in here.items()]
+        # Default: the taught joint deltas. Pan / wrist roll always use them.
+        target = {sid: _clamp(here[sid] + d) for sid, d in self.grab_reach.items()}
+        how = "joint deltas"
+        # Shoulder / elbow / wrist: the same move relative to the GRIPPER as
+        # taught, solved from the arm's current shape (see arm_kinematics).
+        if self.view_pose:
+            view = {int(k): v for k, v in self.view_pose.items()}
+            solved = arm_kinematics.gripper_frame_reach(
+                view, self.grab_reach, here,
+                arm_kinematics.joint_signs(self.approach.mirrored))
+            if solved:
+                target.update(solved)
+                how = "gripper-frame move"
+            else:
+                how = "joint deltas (gripper-frame move unsolvable from here)"
+        print(f"[ball] reaching to grab pose ({how}): "
+              f"{ {s: here[s] for s in target} } -> {target}")
+        arm.setPosition([[s, p] for s, p in target.items()], duration=GRAB_REACH_MS, wait=True)
+        return [[sid, here[sid]] for sid in target]
 
     def _wait_gripper_settled(self, arm):
         """Poll the gripper until GRIPPER_SETTLE_READS consecutive reads agree
