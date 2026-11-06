@@ -39,7 +39,7 @@ from .ball_follow import (
     PAN_GAIN, TILT_GAIN, PAN_DIR, TILT_DIR,
     MAX_STEP, MIN_TRIM_STEP_PAN,
     MOVE_DURATION_MS, CENTER_DEADBAND_PX,
-    PAN_MIN, PAN_MAX, LIFT_MAX, pan_limits,
+    PAN_MIN, PAN_MAX, LIFT_MAX, pan_limits, open_gripper_firmly,
     NO_BALL_GRACE_FRAMES,
     MIN_CONTOUR_AREA, MIN_FILL_RATIO,
     CAM_GRIPPER_OFFSET_X, CAM_GRIPPER_OFFSET_Y,
@@ -585,14 +585,15 @@ class PickPlaceMode(Mode):
         print("[pickplace] DROPPING")
         self.state = "DROPPING"
         try:
-            arm.setPosition(SERVO_GRIPPER, GRIPPER_OPEN_POS,
-                            duration=GRIPPER_OPEN_DURATION_MS, wait=True)
+            open_gripper_firmly(arm, GRIPPER_OPEN_POS, label="pickplace")
         except Exception as e:
             print(f"[pickplace] drop failed: {e}")
         print("[pickplace] HOMING")
         self.state = "HOMING"
         try:
-            arm.setPosition(HOME_POSE, duration=HOMING_DURATION_MS, wait=True)
+            # Home with the jaws left open: HOME_POSE would half-close them on
+            # nothing, and suction-cup jaw tips then stick together.
+            arm.setPosition(HOME_POSE_KEEP_GRIP, duration=HOMING_DURATION_MS, wait=True)
         except Exception as e:
             print(f"[pickplace] home failed: {e}")
 

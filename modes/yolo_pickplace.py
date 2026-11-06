@@ -283,7 +283,7 @@ class YoloBallFollowMode(BallFollowMode):
         pan_err = bx - cx_target
         tilt_err = by - cy_target
         radius_err = self.target_radius_px - br
-        centered_ok = abs(pan_err) <= bf.CENTER_DEADBAND_PX and abs(tilt_err) <= bf.CENTER_DEADBAND_PX
+        centered_ok = abs(pan_err) <= bf.CENTER_DEADBAND_PX and abs(tilt_err) <= bf.GRAB_TILT_DEADBAND_PX
         approach_centered_ok = abs(pan_err) <= bf.APPROACH_DEADBAND_PX and abs(tilt_err) <= bf.APPROACH_DEADBAND_PX
         radius_ok = abs(radius_err) <= self.radius_tol
         # Sticky-centered: at close range each 18-unit pan can fling the ball
@@ -400,7 +400,7 @@ class YoloBallFollowMode(BallFollowMode):
             d_pan = int(round(bf._step_toward(pan_err, bf.PAN_GAIN, bf.MAX_STEP,
                                               min_step=bf.MIN_TRIM_STEP_PAN))) * bf.PAN_DIR
             self._last_pan_at = now_ms
-        if abs(tilt_err) > bf.CENTER_DEADBAND_PX:
+        if abs(tilt_err) > bf.GRAB_TILT_DEADBAND_PX:
             d_tilt = int(round(bf._step_toward(tilt_err, bf.TILT_GAIN, bf.MAX_STEP))) * bf.TILT_DIR
             d_elbow += int(round(d_tilt * bf.TILT_ELBOW_RATIO)) * bf.TILT_ELBOW_DIR
         if approach_centered_ok and too_far:

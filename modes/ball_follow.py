@@ -99,6 +99,20 @@ GRIPPER_SETTLE_READS = 3        # how many agreeing reads (100 ms apart) before 
 GRIPPER_SETTLE_DWELL_S = 0.5    # let the servo build full torque on the ball before lifting
 GRIPPER_EMPTY_POS = 900         # jaws at/after this after the lift = nothing in them (a ball holds them well below)
 GRIPPER_TRACK_POS = 250         # jaw opening while tracking (matches the scan poses)
+# Jaw tips with suction cups stick together when they close on nothing, and
+# a plain "open" can stall against the seal. open_gripper_firmly() checks the
+# jaws really opened and, if not, snaps them: a short squeeze, then open at
+# full speed, a few times.
+GRIPPER_UNSTICK_TRIES = 4
+GRIPPER_OPEN_SLACK = 120        # opened = jaws within this of the commanded position
+GRIPPER_SNAP_MS = 120           # fast open: full speed, so the jolt breaks the seal
+GRIPPER_SQUEEZE = 60            # squeeze this much before each snap open
+# Up/down tolerance before a grab. Left/right keeps CENTER_DEADBAND_PX (a
+# single pan step moves the image ~126 px), but one wrist step only turns the
+# camera ~3.4 deg (~32 px at any distance), so up/down can be held tighter.
+# With the camera looking down and forward, a ball still HIGH in the image is
+# farther away than taught and the jaws close short of it.
+GRAB_TILT_DEADBAND_PX = 30
 GRAB_REACH_MS = 1200            # duration of the taught blind move from the view pose to the grab pose
 
 # --- arm conventions (from main.execute_arm_action) ---
@@ -263,6 +277,38 @@ class ApproachPlan:
     def blocked_msg(self, lift, elbow):
         return (f"OUT-OF-REACH: lift={lift} (limit {self.lift_limit}) "
                 f"elbow={elbow} (limit {self.elbow_limit})")
+
+
+def open_gripper_firmly(arm, target=GRIPPER_TRACK_POS, label="ball"):
+    """Open the jaws to ``target`` and make sure they actually opened.
+
+    Suction-cup jaw tips that closed on nothing stick together, and a normal
+    open stalls against the seal. If the jaws are still shut after the open,
+    squeeze briefly and snap open at full speed, up to GRIPPER_UNSTICK_TRIES
+    times. Returns the final jaw position (None if it can't be read)."""
+    arm.setPosition(SERVO_GRIPPER, target, duration=300, wait=True)
+    pos = stuck_at = None
+    for attempt in range(GRIPPER_UNSTICK_TRIES + 1):
+        time.sleep(0.15)
+        try:
+            pos = int(arm.getPosition(SERVO_GRIPPER))
+        except Exception as e:
+            print(f"[{label}] gripper read failed while opening: {e}")
+            return None
+        if pos <= target + GRIPPER_OPEN_SLACK:
+            if attempt:
+                print(f"[{label}] jaws unstuck after {attempt} snap(s): at {pos}")
+            return pos
+        if attempt == GRIPPER_UNSTICK_TRIES:
+            break
+        print(f"[{label}] jaws stuck at {pos} (wanted {target}) — snapping open")
+        if stuck_at is None:
+            stuck_at = pos       # squeeze from here every time, so it doesn't creep shut
+        arm.setPosition(SERVO_GRIPPER, min(1000, stuck_at + GRIPPER_SQUEEZE), duration=100, wait=True)
+        arm.setPosition(SERVO_GRIPPER, target, duration=GRIPPER_SNAP_MS, wait=True)
+    print(f"[{label}] WARNING: jaws still stuck at {pos} after {GRIPPER_UNSTICK_TRIES} snaps "
+          f"— pull the suction cups apart by hand")
+    return pos
 
 
 def radius_tolerance(target_radius_px):
@@ -502,7 +548,7 @@ class BallFollowMode(Mode):
         pan_err = bx - cx_target
         tilt_err = by - cy_target
         radius_err = self.target_radius_px - br
-        centered_ok = abs(pan_err) <= CENTER_DEADBAND_PX and abs(tilt_err) <= CENTER_DEADBAND_PX
+        centered_ok = abs(pan_err) <= CENTER_DEADBAND_PX and abs(tilt_err) <= GRAB_TILT_DEADBAND_PX
         # Looser gate that just requires the ball to be roughly under the gripper:
         # used to allow descent while pan/tilt are still trimming, so we don't
         # sit forever waiting for perfect centering before reaching for the ball.
@@ -544,7 +590,7 @@ class BallFollowMode(Mode):
         if abs(pan_err) > CENTER_DEADBAND_PX:
             d_pan = int(round(_step_toward(pan_err, PAN_GAIN, MAX_STEP,
                                             min_step=MIN_TRIM_STEP_PAN))) * PAN_DIR
-        if abs(tilt_err) > CENTER_DEADBAND_PX:
+        if abs(tilt_err) > GRAB_TILT_DEADBAND_PX:
             d_tilt = int(round(_step_toward(tilt_err, TILT_GAIN, MAX_STEP))) * TILT_DIR
             # Elbow helps with larger tilts so wrist_flex doesn't max out alone.
             d_elbow += int(round(d_tilt * TILT_ELBOW_RATIO)) * TILT_ELBOW_DIR
@@ -673,7 +719,7 @@ class BallFollowMode(Mode):
         returned so the caller goes back to tracking instead of carrying an
         empty gripper to the box.
         """
-        arm.setPosition(SERVO_GRIPPER, 0, duration=500, wait=True)
+        open_gripper_firmly(arm, 0)
         view_pose = self._reach_to_grab_pose(arm)
         arm.setPosition(SERVO_GRIPPER, GRIPPER_CLOSE_TARGET, duration=GRIPPER_CLOSE_MS, wait=True)
 
@@ -683,7 +729,7 @@ class BallFollowMode(Mode):
         actual = self._wait_gripper_settled(arm)
         if actual >= GRIPPER_CLOSE_TARGET - GRIPPER_STALL_SLACK:
             print(f"[ball] gripper closed to {actual} — nothing in the jaws; back to tracking")
-            arm.setPosition(SERVO_GRIPPER, GRIPPER_TRACK_POS, duration=300, wait=True)
+            open_gripper_firmly(arm, GRIPPER_TRACK_POS)
             if view_pose:
                 # Back to where the camera could see the ball, so tracking
                 # can find it again instead of staring past it.
@@ -717,7 +763,7 @@ class BallFollowMode(Mode):
         if after >= GRIPPER_EMPTY_POS:
             print(f"[ball] ball slipped during lift: gripper {actual} -> {after}; back to tracking")
             self.hold_target = None
-            arm.setPosition(SERVO_GRIPPER, GRIPPER_TRACK_POS, duration=300, wait=True)
+            open_gripper_firmly(arm, GRIPPER_TRACK_POS)
             return False
         print(f"[ball] lifted; gripper {actual} -> {after}")
 
