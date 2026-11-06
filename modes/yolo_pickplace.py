@@ -403,13 +403,14 @@ class YoloBallFollowMode(BallFollowMode):
             d_tilt = int(round(bf._step_toward(tilt_err, bf.TILT_GAIN, bf.MAX_STEP))) * bf.TILT_DIR
             d_elbow += int(round(d_tilt * bf.TILT_ELBOW_RATIO)) * bf.TILT_ELBOW_DIR
         if approach_centered_ok and too_far:
-            if pos[bf.SERVO_SHOULDER_LIFT] >= self.lift_max or pos[bf.SERVO_ELBOW_FLEX] >= self.elbow_max:
+            step = self.approach.step(pos[bf.SERVO_SHOULDER_LIFT], pos[bf.SERVO_ELBOW_FLEX])
+            if step is None:
                 gate_state = (f"D={D:.0f} target={self.D_grab:.0f}" if use_depth
                               else f"r={int(br)} target={self.target_radius_px}")
-                self._log(f"APPROACH-BLOCKED: lift={pos[bf.SERVO_SHOULDER_LIFT]}>={self.lift_max} or elbow={pos[bf.SERVO_ELBOW_FLEX]}>={self.elbow_max}; {gate_state}")
+                self._log(f"{self.approach.blocked_msg(pos[bf.SERVO_SHOULDER_LIFT], pos[bf.SERVO_ELBOW_FLEX])}; {gate_state}")
             else:
-                d_lift = bf.APPROACH_STEP
-                d_elbow += int(round(bf.APPROACH_STEP * bf.ELBOW_REACH_RATIO))
+                d_lift, d_reach_elbow = step
+                d_elbow += d_reach_elbow
                 if d_tilt == 0 and tilt_err != 0:
                     d_tilt = int(round(bf._step_toward(tilt_err, bf.TILT_GAIN, bf.MAX_STEP))) * bf.TILT_DIR
 
@@ -423,9 +424,9 @@ class YoloBallFollowMode(BallFollowMode):
         if d_tilt:
             targets.append([bf.SERVO_WRIST_FLEX, bf._clamp(pos[bf.SERVO_WRIST_FLEX] + d_tilt)])
         if d_lift:
-            targets.append([bf.SERVO_SHOULDER_LIFT, bf._clamp(pos[bf.SERVO_SHOULDER_LIFT] + d_lift, hi=max(self.lift_max, pos[bf.SERVO_SHOULDER_LIFT]))])
+            targets.append([bf.SERVO_SHOULDER_LIFT, self.approach.clamp_lift(pos[bf.SERVO_SHOULDER_LIFT], pos[bf.SERVO_SHOULDER_LIFT] + d_lift)])
         if d_elbow:
-            targets.append([bf.SERVO_ELBOW_FLEX, bf._clamp(pos[bf.SERVO_ELBOW_FLEX] + d_elbow, hi=max(self.elbow_max, pos[bf.SERVO_ELBOW_FLEX]))])
+            targets.append([bf.SERVO_ELBOW_FLEX, self.approach.clamp_elbow(pos[bf.SERVO_ELBOW_FLEX], pos[bf.SERVO_ELBOW_FLEX] + d_elbow)])
 
         t_arm_start = time.perf_counter()
         if targets:

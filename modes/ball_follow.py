@@ -71,11 +71,12 @@ PAN_MAX = 860              # 2026-07-19: widened from [300, 800] to cover the ta
 # mis-set TARGET_RADIUS_PX) can't drive the gripper into the table. Tune by teach-mode probing.
 LIFT_MAX = 800             # shoulder_lift ceiling during approach (larger = reach further down)
 ELBOW_MAX = 500            # elbow_flex ceiling during approach
-# Defaults only: once calibrate_offset has saved a view pose, modes use the
-# view pose + REACH_MARGIN instead (reach_limits()), since arm builds and
-# mounts differ; either way widened to cover the scan poses. A ceiling never
-# moves a joint backwards, only stops it.
-REACH_MARGIN = 100         # how far past the calibrated view pose the approach may go
+# Defaults only, for an arm built like the Tria's. Arm builds differ (some
+# are mirror images: elbow and wrist bend the other way), so modes work out
+# the approach direction and limits per arm with ApproachPlan, from the
+# calibrate_offset grab reach and the scan poses. A limit never moves a joint
+# backwards, only stops it.
+APPROACH_REACH = 250       # how far past the calibrated view pose the shoulder may reach
 SCAN_DWELL_S = 1.5         # hold each scan pose this long before advancing
 SCAN_MOVE_MS = 2500        # duration for the move between scan poses (slowed so right-pose lift=635 doesn't plunge toward table)
 NO_BALL_GRACE_FRAMES = 30  # ~5s at 6 fps — hold pose when ball briefly disappears (clipping, HSV flicker) instead of bouncing back to scan; the scan re-entry was producing the visible "shaking" between brief-track and scan-move every time detection flickered
@@ -155,23 +156,109 @@ def pan_limits(scan_poses):
     return min([PAN_MIN] + pans), max([PAN_MAX] + pans)
 
 
-def reach_limits(scan_poses, view_pose=None):
-    """Approach ceilings (lift_max, elbow_max) for THIS arm.
+def _sign(v):
+    return 1 if v > 0 else -1
 
-    With a calibrated view pose: the view pose + REACH_MARGIN (the arm must
-    be able to reach where it was calibrated, a bit further for a farther
-    ball, and no further), widened to cover the scan poses so the arm isn't
-    'blocked' before it moves. Without one: LIFT_MAX / ELBOW_MAX, widened
-    to cover the scan poses."""
-    lifts = [int(p) for pose in scan_poses for sid, p in pose if sid == SERVO_SHOULDER_LIFT]
-    elbows = [int(p) for pose in scan_poses for sid, p in pose if sid == SERVO_ELBOW_FLEX]
-    vl = vp_e = None
-    if view_pose:
-        vl = view_pose.get(str(SERVO_SHOULDER_LIFT))
-        vp_e = view_pose.get(str(SERVO_ELBOW_FLEX))
-    lift_base = [int(vl) + REACH_MARGIN] if vl is not None else [LIFT_MAX]
-    elbow_base = [int(vp_e) + REACH_MARGIN] if vp_e is not None else [ELBOW_MAX]
-    return (min(1000, max(lift_base + lifts)), min(1000, max(elbow_base + elbows)))
+
+class ApproachPlan:
+    """Which way is 'toward the ball' for THIS arm, and how far to go.
+
+    The approach steps shoulder_lift and elbow_flex together. Which sign
+    reaches forward depends on how the arm was built: on the Tria's arm
+    (elbow ~277 in the scan pose) both go up; on a mirror-image build
+    (elbow ~845) both go down, and going up folds the arm back on itself.
+
+    Direction, best source first:
+      1. the calibrate_offset grab reach (view pose -> jaws around the
+         ball): its shoulder/elbow move IS "toward the ball" for this arm;
+      2. otherwise the scan pose: elbow above 500 = mirror-image build.
+    Limits: the elbow stops at straight (500) when it is straightening,
+    the shoulder APPROACH_REACH past the view pose (LIFT_MAX without one).
+    When one joint runs out of room the other keeps going alone."""
+
+    STRAIGHT = 500
+
+    def __init__(self, scan_poses, view_pose=None, grab_reach=None):
+        lifts = [int(p) for pose in scan_poses for sid, p in pose if sid == SERVO_SHOULDER_LIFT]
+        elbows = [int(p) for pose in scan_poses for sid, p in pose if sid == SERVO_ELBOW_FLEX]
+        scan_elbow = elbows[0] if elbows else 300
+        reach = grab_reach or {}
+        r_lift = int(reach.get(SERVO_SHOULDER_LIFT, reach.get(str(SERVO_SHOULDER_LIFT), 0)) or 0)
+        r_elbow = int(reach.get(SERVO_ELBOW_FLEX, reach.get(str(SERVO_ELBOW_FLEX), 0)) or 0)
+        if abs(r_lift) >= 10:
+            self.lift_dir = _sign(r_lift)
+            ratio = r_elbow / abs(r_lift)
+            self.elbow_dir = _sign(r_elbow) if r_elbow else _sign(self.STRAIGHT - scan_elbow)
+            self.elbow_ratio = min(1.5, abs(ratio)) if r_elbow else ELBOW_REACH_RATIO
+            self.source = f"taught grab reach (lift {r_lift:+d}, elbow {r_elbow:+d})"
+        else:
+            mirrored = scan_elbow > self.STRAIGHT
+            self.lift_dir = -1 if mirrored else 1
+            self.elbow_dir = -1 if mirrored else 1
+            self.elbow_ratio = ELBOW_REACH_RATIO
+            self.source = (f"scan pose (elbow {scan_elbow}: "
+                           f"{'mirror-image' if mirrored else 'Tria-style'} build)")
+
+        vp = view_pose or {}
+        v_lift = vp.get(str(SERVO_SHOULDER_LIFT), vp.get(SERVO_SHOULDER_LIFT))
+        v_elbow = vp.get(str(SERVO_ELBOW_FLEX), vp.get(SERVO_ELBOW_FLEX))
+        if v_lift is not None:
+            lim = int(v_lift) + self.lift_dir * APPROACH_REACH
+        else:
+            lim = LIFT_MAX if self.lift_dir > 0 else 1000 - LIFT_MAX
+        # Never stricter than the scan poses, so the arm isn't 'blocked' before it moves.
+        if lifts:
+            lim = max([lim] + lifts) if self.lift_dir > 0 else min([lim] + lifts)
+        self.lift_limit = max(0, min(1000, lim))
+
+        e_ref = int(v_elbow) if v_elbow is not None else scan_elbow
+        if (e_ref - self.STRAIGHT) * self.elbow_dir < 0:
+            self.elbow_limit = self.STRAIGHT          # straightening: stop at straight
+        else:
+            self.elbow_limit = max(0, min(1000, e_ref + self.elbow_dir * REACH_MARGIN))
+
+    @staticmethod
+    def _room(pos, limit, d):
+        return (limit - pos) * d > 0
+
+    def step(self, lift, elbow):
+        """(d_lift, d_elbow) for one approach step from the current pose, or
+        None when both joints are at their limits (ball out of reach)."""
+        lift_ok = self._room(lift, self.lift_limit, self.lift_dir)
+        elbow_ok = self.elbow_ratio > 0 and self._room(elbow, self.elbow_limit, self.elbow_dir)
+        if not lift_ok and not elbow_ok:
+            return None
+        d_lift = self.lift_dir * APPROACH_STEP if lift_ok else 0
+        if not elbow_ok:
+            d_elbow = 0
+        elif lift_ok:
+            d_elbow = self.elbow_dir * int(round(APPROACH_STEP * self.elbow_ratio))
+        else:
+            d_elbow = self.elbow_dir * APPROACH_STEP   # shoulder maxed: elbow reaches alone
+        return d_lift, d_elbow
+
+    def clamp_lift(self, cur, new):
+        return self._clamp_toward(cur, new, self.lift_limit, self.lift_dir)
+
+    def clamp_elbow(self, cur, new):
+        return self._clamp_toward(cur, new, self.elbow_limit, self.elbow_dir)
+
+    @staticmethod
+    def _clamp_toward(cur, new, limit, d):
+        # Stop at the limit in the approach direction, but never pull a joint
+        # that is already past it backwards.
+        if d > 0:
+            return _clamp(new, hi=max(limit, cur))
+        return _clamp(new, lo=min(limit, cur))
+
+    def describe(self):
+        return (f"approach from {self.source}: lift {'+' if self.lift_dir > 0 else '-'} "
+                f"to {self.lift_limit}, elbow {'+' if self.elbow_dir > 0 else '-'}"
+                f"{self.elbow_ratio:.2f}x to {self.elbow_limit}")
+
+    def blocked_msg(self, lift, elbow):
+        return (f"OUT-OF-REACH: lift={lift} (limit {self.lift_limit}) "
+                f"elbow={elbow} (limit {self.elbow_limit})")
 
 
 def radius_tolerance(target_radius_px):
@@ -255,10 +342,8 @@ class BallFollowMode(Mode):
         self.target_radius_px = int(ofs.get('target_radius_px', TARGET_RADIUS_PX))
         self.radius_tol = radius_tolerance(self.target_radius_px)
         self.grab_reach = cam_gripper_offset_store.load_reach()
-        self.lift_max, self.elbow_max = reach_limits(self.scan_poses, ofs.get('view_pose'))
-        if (self.lift_max, self.elbow_max) != (LIFT_MAX, ELBOW_MAX):
-            print(f"[ball] approach ceilings widened to lift<={self.lift_max} "
-                  f"elbow<={self.elbow_max} to cover the taught poses")
+        self.approach = ApproachPlan(self.scan_poses, ofs.get('view_pose'), self.grab_reach)
+        print(f"[ball] {self.approach.describe()}")
         if ofs:
             print(f"[ball] cam-gripper calibration: offset=({self.offset_x:+d},{self.offset_y:+d}) "
                   f"radius={self.target_radius_px}px reach={self.grab_reach or 'none (grab in place)'}")
@@ -464,13 +549,15 @@ class BallFollowMode(Mode):
         if approach_centered_ok and br < self.target_radius_px - self.radius_tol:
             # Hard ceiling: if we're already at the safety limit, stop approaching.
             # Prevents table slam when radius_ok never triggers.
-            if pos[SERVO_SHOULDER_LIFT] >= self.lift_max or pos[SERVO_ELBOW_FLEX] >= self.elbow_max:
-                self._log(f"APPROACH-BLOCKED: lift={pos[SERVO_SHOULDER_LIFT]}>={self.lift_max} or elbow={pos[SERVO_ELBOW_FLEX]}>={self.elbow_max}; r={int(br)} target={self.target_radius_px}")
+            step = self.approach.step(pos[SERVO_SHOULDER_LIFT], pos[SERVO_ELBOW_FLEX])
+            if step is None:
+                self._log(f"{self.approach.blocked_msg(pos[SERVO_SHOULDER_LIFT], pos[SERVO_ELBOW_FLEX])}; "
+                          f"r={int(br)} target={self.target_radius_px}")
             else:
-                d_lift = APPROACH_STEP   # reach forward
-                # Coordinate elbow with shoulder — extends the arm rather than just
-                # tipping the whole thing from the shoulder. Ratio is empirical.
-                d_elbow += int(round(APPROACH_STEP * ELBOW_REACH_RATIO))
+                # Reach toward the ball: shoulder and elbow together, in the
+                # direction that extends THIS arm (see ApproachPlan).
+                d_lift, d_reach_elbow = step
+                d_elbow += d_reach_elbow
                 # Co-trim wrist during descent even when inside CENTER_DEADBAND_PX.
                 # Each lift step shifts the ball ~30 px upward in the frame (5 px per
                 # lift unit measured 2026-04-19), which kicks tilt_err well past the
@@ -497,12 +584,12 @@ class BallFollowMode(Mode):
             new_tilt = _clamp(pos[SERVO_WRIST_FLEX] + d_tilt)
             targets.append([SERVO_WRIST_FLEX, new_tilt])
         if d_lift:
-            new_lift = _clamp(pos[SERVO_SHOULDER_LIFT] + d_lift,
-                              hi=max(self.lift_max, pos[SERVO_SHOULDER_LIFT]))
+            new_lift = self.approach.clamp_lift(pos[SERVO_SHOULDER_LIFT],
+                                                pos[SERVO_SHOULDER_LIFT] + d_lift)
             targets.append([SERVO_SHOULDER_LIFT, new_lift])
         if d_elbow:
-            new_elbow = _clamp(pos[SERVO_ELBOW_FLEX] + d_elbow,
-                               hi=max(self.elbow_max, pos[SERVO_ELBOW_FLEX]))
+            new_elbow = self.approach.clamp_elbow(pos[SERVO_ELBOW_FLEX],
+                                                  pos[SERVO_ELBOW_FLEX] + d_elbow)
             targets.append([SERVO_ELBOW_FLEX, new_elbow])
 
         t_arm_start = time.perf_counter()
