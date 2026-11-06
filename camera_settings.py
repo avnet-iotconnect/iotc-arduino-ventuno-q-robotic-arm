@@ -85,26 +85,60 @@ WB_FALLBACK_K = 4000          # used if the camera can't report its measurement
 _WB_MEASURE_MAX_S = 6.0       # give auto white balance this long to settle
 
 
+WB_SEARCH_MIN_K, WB_SEARCH_MAX_K = 2800, 7500   # Brio 100/101 manual range
+
+
+def _red_blue(cap, frames=8):
+    """log(red/blue) of the average colour, after letting a change settle.
+    None if the camera returns no frames."""
+    import math
+    frame = None
+    for _ in range(frames):
+        ok, f = cap.read()
+        if ok:
+            frame = f
+    if frame is None:
+        return None
+    b, _g, r = frame.reshape(-1, 3).mean(0)
+    return math.log((r + 1.0) / (b + 1.0))
+
+
 def _measure_wb(cap):
-    """Let the camera's auto white balance settle on the current lighting and
-    return the colour temperature (K) it chose, or None if the camera doesn't
-    report one. Reads frames meanwhile, because UVC cameras only adjust white
-    balance while streaming."""
+    """Return the manual white balance (K) that matches what the camera's
+    auto white balance picks for this room, or None if it can't be measured.
+
+    The temperature a UVC camera *reports* while in auto mode is on a
+    different scale from its manual setting (a Brio 101 reported 5340 K for
+    a picture that manual 4600 K reproduces; locking 5340 K came out deep
+    orange). So: let auto settle, record the picture's red/blue balance,
+    then binary-search the manual setting that gives the same balance.
+    Higher manual K = warmer picture, which makes the search well-defined."""
     import time
     cap.set(cv2.CAP_PROP_AUTO_WB, 1)
-    start = time.monotonic()
-    last, stable_since = None, None
+    start, target, prev = time.monotonic(), None, None
     while time.monotonic() - start < _WB_MEASURE_MAX_S:
-        cap.read()
-        k = cap.get(cv2.CAP_PROP_WB_TEMPERATURE)
-        if not 2000 <= k <= 10000:
-            last, stable_since = None, None
-            continue
-        if last is None or abs(k - last) > 50:
-            last, stable_since = k, time.monotonic()
-        elif time.monotonic() - stable_since >= 1.0 and time.monotonic() - start >= 2.0:
+        rb = _red_blue(cap, frames=10)
+        if rb is None:
+            return None
+        if prev is not None and abs(rb - prev) < 0.02 and time.monotonic() - start > 1.5:
+            target = rb
             break
-    return int(round(last)) if last else None
+        prev = rb
+    if target is None:
+        target = prev
+    cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+    lo, hi = WB_SEARCH_MIN_K, WB_SEARCH_MAX_K
+    while hi - lo > 50:
+        mid = (lo + hi) // 2
+        cap.set(cv2.CAP_PROP_WB_TEMPERATURE, mid)
+        rb = _red_blue(cap)
+        if rb is None:
+            return None
+        if rb > target:
+            hi = mid        # too warm -> go lower
+        else:
+            lo = mid
+    return int(round((lo + hi) / 2 / 10.0)) * 10
 
 
 def _resolve_auto_wb(cap, settings, path):
@@ -137,6 +171,9 @@ def apply(cap, settings, path=None):
     if not settings:
         return
     if str(settings.get('wb_temperature', '')).lower() == WB_AUTO:
+        # Measure under the final exposure / gain / saturation.
+        apply(cap, {k: v for k, v in settings.items()
+                    if k not in ('auto_wb', 'wb_temperature')})
         settings = _resolve_auto_wb(cap, settings, path or DEFAULT_PATH)
     # auto_* keys go first so the corresponding fixed values stick.
     ordered_keys = sorted(settings.keys(),
