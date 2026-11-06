@@ -135,8 +135,8 @@ def camera_loop(state, camera_index, width, height, lower, upper,
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    cam_settings.apply(cap, cam_settings.load(
-        camera_settings_path or cam_settings.DEFAULT_PATH))
+    settings_path = camera_settings_path or cam_settings.DEFAULT_PATH
+    cam_settings.apply(cap, cam_settings.load(settings_path), path=settings_path)
     if not cap.isOpened():
         print(f"[calib] ERROR: could not open camera {camera_index}", file=sys.stderr)
         state.quit = True

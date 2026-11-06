@@ -800,7 +800,12 @@ def process_iotconnect_commands(arm):
                                    f"or a preset: {cam_settings.preset_names()}")
                 else:
                     try:
-                        casted = cam_settings.SETTING_PROPS[name][1](value)
+                        if (name == 'wb_temperature'
+                                and str(value).strip().lower() == cam_settings.WB_AUTO):
+                            # Re-measure this room's white balance and lock it.
+                            casted = cam_settings.WB_AUTO
+                        else:
+                            casted = cam_settings.SETTING_PROPS[name][1](value)
                     except (TypeError, ValueError):
                         ack_status = C2dAck.CMD_FAILED
                         ack_message = f"camera_setting: '{value}' is not a valid number"

@@ -665,7 +665,7 @@ site-dependent.
 | `drop_pose.json` | Only if drop target moved | Send `release_torque`, hand-pose arm, then `hold_pose` + `teach_drop_pose` from cloud |
 | `scan_poses.json` | Only if ball staging area moved | `python3 teach_pose.py` |
 | `box_color.json` | Only if drop box or lighting changed | `python3 ball_calibrate.py --output box_color.json --camera N` |
-| `camera_settings.json` | Only if lighting is very different | Re-run the exposure/WB lock script |
+| `camera_settings.json` | Only if lighting is very different | Send `camera_setting wb_temperature auto` to re-measure white balance for the new room, then redo `calibrate_ball` / `calibrate_box` |
 
 #### Re-Teaching at a New Site
 
@@ -778,6 +778,7 @@ These commands work via /IOTCONNECT regardless of which demo is running:
 | `hold_pose` | Re-engage torque at the current pose |
 | `teach_scan_pose name=<n>` | Snapshot current arm pose into a named scan slot |
 | `camera_setting <name> <value>` | Update a camera setting live (exposure, saturation, etc.) |
+| `camera_setting wb_temperature auto` | Re-measure white balance for the current lighting and lock it (fixes an orange or blue tint) |
 | `camera_settings_show` / `camera_settings_reset` | Show the current camera settings / wipe them back to camera defaults |
 | `camera_preset <name>` | Apply a whole camera preset live: `normal`, `bright`, `dim`, `vivid`, `warm`, `cool`, `auto` (or one you saved) |
 | `camera_preset_save <name>` | Save the current camera settings as a named preset (tune with `camera_setting`, then keep it as a button) |

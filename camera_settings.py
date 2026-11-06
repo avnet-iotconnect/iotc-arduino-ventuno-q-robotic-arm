@@ -16,14 +16,20 @@ camera with `auto_exposure: 1`, `auto_wb: 0`, and a fixed `exposure` value,
 then everything stays consistent.
 
 Setting names map to V4L2 / OpenCV properties — see SETTING_PROPS below.
-Common starting values (camera-specific; tune for yours):
+The bootstrap writes this default (Brio 100/101 on the VENTUNO Q):
 
   {
-    "auto_wb":       0,
-    "auto_exposure": 1,    # 1 = manual on most V4L2 backends, 3 = auto
-    "exposure":      -6,   # range varies; -7 is dark, 0 is bright (Brio/eMeet)
-    "saturation":    140
+    "auto_wb":        0,
+    "wb_temperature": "auto",  # measured for this room on first open, then
+                               # locked and saved as a number (see apply())
+    "auto_exposure":  1,       # 1 = manual on most V4L2 backends, 3 = auto
+    "exposure":       250,
+    "gain":           10,
+    "saturation":     140
   }
+
+A fixed white balance only suits one kind of light: 5400 K under warm indoor
+LEDs turns the whole picture orange. "auto" avoids hard-coding it.
 """
 
 import json
@@ -74,13 +80,64 @@ def save(settings, path=DEFAULT_PATH):
         print(f"[camera_settings] save failed ({path}): {e}")
 
 
-def apply(cap, settings):
+WB_AUTO = 'auto'
+WB_FALLBACK_K = 4000          # used if the camera can't report its measurement
+_WB_MEASURE_MAX_S = 6.0       # give auto white balance this long to settle
+
+
+def _measure_wb(cap):
+    """Let the camera's auto white balance settle on the current lighting and
+    return the colour temperature (K) it chose, or None if the camera doesn't
+    report one. Reads frames meanwhile, because UVC cameras only adjust white
+    balance while streaming."""
+    import time
+    cap.set(cv2.CAP_PROP_AUTO_WB, 1)
+    start = time.monotonic()
+    last, stable_since = None, None
+    while time.monotonic() - start < _WB_MEASURE_MAX_S:
+        cap.read()
+        k = cap.get(cv2.CAP_PROP_WB_TEMPERATURE)
+        if not 2000 <= k <= 10000:
+            last, stable_since = None, None
+            continue
+        if last is None or abs(k - last) > 50:
+            last, stable_since = k, time.monotonic()
+        elif time.monotonic() - stable_since >= 1.0 and time.monotonic() - start >= 2.0:
+            break
+    return int(round(last)) if last else None
+
+
+def _resolve_auto_wb(cap, settings, path):
+    """`wb_temperature: "auto"` means: measure this room's white balance once,
+    lock it, and save the number. Every later open (demo, calibrators) then
+    uses the same fixed value, so colours calibrated under it stay put. Send
+    `camera_setting wb_temperature auto` to re-measure at a new venue."""
+    measured = _measure_wb(cap)
+    k = measured or WB_FALLBACK_K
+    print(f"[camera_settings] auto white balance measured "
+          f"{measured if measured else 'nothing'} -> locking {k} K")
+    settings = dict(settings, auto_wb=0, wb_temperature=k)
+    # Save so later opens reuse this value rather than measure again. Only
+    # the WB keys change; anything else in the file is left as it was.
+    on_disk = load(path)
+    if str(on_disk.get('wb_temperature', '')).lower() == WB_AUTO:
+        on_disk.update(auto_wb=0, wb_temperature=k)
+        save(on_disk, path)
+    return settings
+
+
+def apply(cap, settings, path=None):
     """Apply each setting from ``settings`` to an opened cv2.VideoCapture.
     Order matters for some V4L2 stacks: switch auto_* off first, then set the
     fixed values, otherwise the camera reverts. We use a fixed sort order to
-    enforce that."""
+    enforce that.
+
+    ``wb_temperature: "auto"`` is measured first and replaced by the
+    measured value, which is saved to ``path`` (default camera_settings.json)."""
     if not settings:
         return
+    if str(settings.get('wb_temperature', '')).lower() == WB_AUTO:
+        settings = _resolve_auto_wb(cap, settings, path or DEFAULT_PATH)
     # auto_* keys go first so the corresponding fixed values stick.
     ordered_keys = sorted(settings.keys(),
                           key=lambda k: (0 if k.startswith('auto_') else 1, k))

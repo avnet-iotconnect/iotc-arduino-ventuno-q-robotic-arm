@@ -16,7 +16,8 @@
 #   - miniforge3 + conda env iotc-ventuno-xarm (python 3.11 + opencv)
 #   - pip install requirements.txt + requirements-yolo.txt
 #   - PointNet model download (model/get_model.sh)
-#   - camera_settings.json with the locked-camera recipe (auto_wb=0, etc.)
+#   - camera_settings.json with the locked-camera recipe (white balance
+#     measured for this room on first use, then locked)
 #   - desktop launchers on the HDMI GNOME desktop (calibrate / demo buttons)
 #   - robotarm.service autostart (boots the app in IDLE)
 #
@@ -175,16 +176,16 @@ fi
 if [ ! -f "$PROJECT_DIR/camera_settings.json" ]; then
     echo
     echo "[8/10] Writing camera_settings.json with the locked-camera recipe"
-    echo "      (auto_wb=0, auto_exposure=1 manual, exposure=300, gain=80,"
-    echo "       wb_temperature=5400, saturation=180 — Brio 100, normal indoor)"
+    echo "      (manual exposure=250, gain=10, saturation=140; white balance"
+    echo "       \"auto\" = measured on first camera open, then locked + saved)"
     cat > "$PROJECT_DIR/camera_settings.json" <<'EOF'
 {
   "auto_wb": 0,
-  "wb_temperature": 5400,
+  "wb_temperature": "auto",
   "auto_exposure": 1,
-  "exposure": 300,
-  "gain": 80,
-  "saturation": 180
+  "exposure": 250,
+  "gain": 10,
+  "saturation": 140
 }
 EOF
 else
