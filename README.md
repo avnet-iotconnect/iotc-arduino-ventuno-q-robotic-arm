@@ -1,9 +1,10 @@
 # Arduino VENTUNO Q + /IOTCONNECT — XArm Vision Demos
 
 > [!NOTE]
-> This is the **Arduino VENTUNO Q** branch (`ventuno-q`) of the Tria VisionAI
-> Kit 6490 robotic-arm demo. The demos, arm, camera and cloud setup are the
-> same as on `main`; only the board and its software setup differ (Ubuntu
+> This is the **Arduino VENTUNO Q** port of the
+> [Tria VisionAI Kit 6490 robotic-arm demo](https://github.com/avnet-iotconnect/iotc-tria-vision-ai-kit-robotic-arm).
+> The demos, arm, camera and cloud setup are the same; only the board and its
+> software setup differ (Ubuntu
 > 24.04, the `arduino` user instead of root, Qualcomm's apt packages for the
 > NPU runtime, and the GNOME desktop instead of Weston). Board-specific paths
 > live in [board_env.sh](board_env.sh).
@@ -122,14 +123,14 @@ showing classical CV vs. NPU-accelerated deep learning side by side.
 
 ### 2. Clone + Bootstrap
 
-Clone this branch into the `arduino` user's home and run the bootstrap
+Clone this repo into the `arduino` user's home and run the bootstrap
 script **as `arduino` (not root)** — it asks for the `arduino` password once
 for the system steps:
 
 ```bash
 cd ~
-git clone -b ventuno-q https://github.com/avnet-iotconnect/iotc-tria-vision-ai-kit-robotic-arm.git
-cd iotc-tria-vision-ai-kit-robotic-arm
+git clone https://github.com/avnet-iotconnect/iotc-arduino-ventuno-q-robotic-arm.git
+cd iotc-arduino-ventuno-q-robotic-arm
 ./bootstrap-new-board.sh
 ```
 
@@ -165,7 +166,7 @@ Demo #1 will refuse to start with a clear error if this file is absent.
 ### 4. /IOTCONNECT Onboarding
 
 The board needs three files from /IOTCONNECT in the project directory
-(`~/iotc-tria-vision-ai-kit-robotic-arm`), with **exactly these names**:
+(`~/iotc-arduino-ventuno-q-robotic-arm`), with **exactly these names**:
 
 | File | What it is |
 |---|---|
@@ -215,15 +216,15 @@ They are git-ignored, so they never get committed.
 
    Over the network:
    ```bash
-   scp cert_<device>.crt     arduino@<board-ip>:~/iotc-tria-vision-ai-kit-robotic-arm/device-cert.pem
-   scp pk_<device>.pem       arduino@<board-ip>:~/iotc-tria-vision-ai-kit-robotic-arm/device-pkey.pem
-   scp iotcDeviceConfig.json arduino@<board-ip>:~/iotc-tria-vision-ai-kit-robotic-arm/iotcDeviceConfig.json
+   scp cert_<device>.crt     arduino@<board-ip>:~/iotc-arduino-ventuno-q-robotic-arm/device-cert.pem
+   scp pk_<device>.pem       arduino@<board-ip>:~/iotc-arduino-ventuno-q-robotic-arm/device-pkey.pem
+   scp iotcDeviceConfig.json arduino@<board-ip>:~/iotc-arduino-ventuno-q-robotic-arm/iotcDeviceConfig.json
    ```
    Or over the USB-C cable (`adb` ships with Arduino App Lab):
    ```bash
-   adb push cert_<device>.crt     /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/device-cert.pem
-   adb push pk_<device>.pem       /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/device-pkey.pem
-   adb push iotcDeviceConfig.json /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/iotcDeviceConfig.json
+   adb push cert_<device>.crt     /home/arduino/iotc-arduino-ventuno-q-robotic-arm/device-cert.pem
+   adb push pk_<device>.pem       /home/arduino/iotc-arduino-ventuno-q-robotic-arm/device-pkey.pem
+   adb push iotcDeviceConfig.json /home/arduino/iotc-arduino-ventuno-q-robotic-arm/iotcDeviceConfig.json
    ```
    Put quotes around a file name that contains spaces, e.g.
    `"iotcDeviceConfig (3).json"`.
@@ -232,7 +233,7 @@ They are git-ignored, so they never get committed.
 
 On the board:
 ```bash
-cd ~/iotc-tria-vision-ai-kit-robotic-arm
+cd ~/iotc-arduino-ventuno-q-robotic-arm
 ls -l iotcDeviceConfig.json device-cert.pem device-pkey.pem   # all three present
 chmod 600 device-pkey.pem                                     # key readable only by you
 grep -o '"uid": *"[^"]*"' iotcDeviceConfig.json               # should show your device's Unique ID
@@ -263,7 +264,7 @@ dashboard with `set_mode`. To run it by hand instead:
 2. **Launch** ([start.sh](start.sh) activates the conda env and NPU paths
    from [board_env.sh](board_env.sh)):
    ```bash
-   cd ~/iotc-tria-vision-ai-kit-robotic-arm
+   cd ~/iotc-arduino-ventuno-q-robotic-arm
    ./start.sh --webrtc
    ```
 
@@ -830,9 +831,9 @@ model doesn't recognize your specific ball.
 
 ### Arduino VENTUNO Q
 - [Arduino VENTUNO Q Product Page](https://store.arduino.cc/products/ventuno-q) — Hardware specifications and purchase information
-- [Qualcomm Dragonwing Ubuntu — LiteRT on the NPU](https://dragonwingdocs.qualcomm.com/Ubuntu/ai-workflows/lite-rt) — TFLite + QNN delegate setup this branch follows
+- [Qualcomm Dragonwing Ubuntu — LiteRT on the NPU](https://dragonwingdocs.qualcomm.com/Ubuntu/ai-workflows/lite-rt) — TFLite + QNN delegate setup this repo follows
 - [Qualcomm AI Hub models](https://aihub.qualcomm.com/iot/models/) — source of the YOLO-X / MiDaS-V2 w8a8 models
-- `main` branch of this repo — the original Tria VisionAI Kit 6490 version
+- [iotc-tria-vision-ai-kit-robotic-arm](https://github.com/avnet-iotconnect/iotc-tria-vision-ai-kit-robotic-arm) — the original Tria VisionAI Kit 6490 version this repo was ported from
 
 ### /IOTCONNECT
 - [/IOTCONNECT Python SDK](https://github.com/avnet-iotconnect/avnet-iotconnect-python-sdk) — /IOTCONNECT Python SDK for cloud connectivity

@@ -8,11 +8,11 @@ Type=simple
 # The VENTUNO Q runs the demo as the board's `arduino` user (not root as on the
 # Tria): that user is in the video, dialout and fastrpc groups, and owns the
 # HDMI desktop session. bootstrap-new-board.sh rewrites these paths if the repo
-# lives somewhere other than /home/arduino/iotc-tria-vision-ai-kit-robotic-arm.
+# lives somewhere other than /home/arduino/iotc-arduino-ventuno-q-robotic-arm.
 User=arduino
 Environment=PATH=/usr/bin:/bin:/usr/sbin:/sbin
 Environment=HOME=/home/arduino
-ExecStart=/bin/sh /home/arduino/iotc-tria-vision-ai-kit-robotic-arm/deploy/arm_watchdog.sh
+ExecStart=/bin/sh /home/arduino/iotc-arduino-ventuno-q-robotic-arm/deploy/arm_watchdog.sh
 Restart=always
 RestartSec=5
 

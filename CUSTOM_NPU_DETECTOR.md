@@ -3,13 +3,13 @@
 How to train a custom YOLOv8n ball detector on your own data and run it on the **Hexagon NPU** via TFLite + the QNN delegate, alongside (or replacing) the HSV pipeline. Designed so someone with no prior context can repeat the whole pipeline.
 
 > [!NOTE]
-> **VENTUNO Q branch:** this guide was written on the Tria QCS6490. Training and
+> **VENTUNO Q port:** this guide was written on the Tria QCS6490. Training and
 > export are identical; on the board, translate the paths as follows:
 >
 > | Tria (this guide) | Arduino VENTUNO Q |
 > |---|---|
 > | `/root/miniforge3/envs/iotc-tria-xarm/bin/python3` | `~/miniforge3/envs/iotc-ventuno-xarm/bin/python3` (or `source board_env.sh` then `python`) |
-> | `/var/roothome/iotc-tria-vision-ai-kit-robotic-arm/` | `/home/arduino/iotc-tria-vision-ai-kit-robotic-arm/` |
+> | `/var/roothome/iotc-tria-vision-ai-kit-robotic-arm/` | `/home/arduino/iotc-arduino-ventuno-q-robotic-arm/` |
 > | `ADSP_LIBRARY_PATH=/usr/lib/rfsa/adsp` | `ADSP_LIBRARY_PATH=/usr/lib/dsp/cdsp` |
 > | `ssh root@<board>` | `ssh arduino@<board>` (or `adb shell`) |
 >
