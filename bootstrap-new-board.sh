@@ -15,7 +15,7 @@
 #     /etc/labels) — the Tria image ships these; the VENTUNO Q does not
 #   - miniforge3 + conda env iotc-ventuno-xarm (python 3.11 + opencv)
 #   - pip install requirements.txt + requirements-yolo.txt
-#   - PointNet model download (model/get_model.sh)
+#   - PointNet model download (model/get-model.sh)
 #   - camera_settings.json with the locked-camera recipe (white balance
 #     measured for this room on first use, then locked)
 #   - desktop launchers on the HDMI GNOME desktop (calibrate / demo buttons)
@@ -36,9 +36,9 @@
 #      USB-A (or a hub), arm power adapter (7.5V) → wall, arm switch → ON.
 #
 #   3. Calibrate. None of these can be automated; they need eyes on the arm:
-#        - calibrate_ball                  (cloud cmd; click ball in browser)
-#        - calibrate_box                   (cloud cmd; click box in browser)
-#        - calibrate_offset                (cloud cmd; view pose snapshot, then grab pose snapshot)
+#        - calibrate target=ball           (cloud cmd; click ball in browser)
+#        - calibrate target=box            (cloud cmd; click box in browser)
+#        - calibrate target=offset         (cloud cmd; view pose snapshot, then grab pose snapshot)
 #        - teach_scan_pose center/left/right (cloud cmd; release_torque, hand-pose, hold_pose, capture)
 #        - teach_drop_pose                 (cloud cmd; pose gripper above box, snapshot)
 #
@@ -78,7 +78,7 @@ sudo -v   # ask for the password once, up front
 # The board image has the ubuntu-qcom-iot PPA configured but not the AI
 # runtime. qairt-libs provides /usr/lib/libQnnTFLiteDelegate.so (same path
 # as on the Tria); qairt-dsp-binaries links the QCS8300-family Hexagon skel
-# libs into /usr/lib/dsp/cdsp (ADSP_LIBRARY_PATH, see board_env.sh).
+# libs into /usr/lib/dsp/cdsp (ADSP_LIBRARY_PATH, see scripts/board-env.sh).
 echo
 echo "[1/10] Installing Qualcomm NPU runtime (qairt-libs, qairt-dsp-binaries)..."
 sudo apt-get update -q
@@ -167,7 +167,7 @@ echo "[6/10] Installing pip requirements..."
 if [ ! -f "$PROJECT_DIR/model/point_net_1.pth" ]; then
     echo
     echo "[7/10] Downloading PointNet model..."
-    bash model/get_model.sh
+    bash model/get-model.sh
 else
     echo "[7/10] PointNet model already present — skipping download"
 fi
@@ -193,7 +193,7 @@ else
 fi
 
 # Make sure all .sh helpers are executable
-chmod +x ./*.sh deploy/*.sh 2>/dev/null || true
+chmod +x ./*.sh scripts/*.sh deploy/*.sh 2>/dev/null || true
 
 # ---- 9. Desktop launchers on the HDMI GNOME desktop ---------------------
 # Replaces the Tria's Weston panel icons: app-grid entries for ball-calibrate,
@@ -207,7 +207,7 @@ make_launcher() {   # file name cmd icon
 [Desktop Entry]
 Type=Application
 Name=$2
-Exec=gnome-terminal --working-directory=$PROJECT_DIR -- $PROJECT_DIR/launch_gui.sh $3
+Exec=gnome-terminal --working-directory=$PROJECT_DIR -- $PROJECT_DIR/scripts/launch-gui.sh $3
 Icon=$4
 Terminal=false
 Categories=Utility;
@@ -276,7 +276,7 @@ echo "         \"import xarm; a = xarm.Controller('USB'); a.setPosition([[i,500]
 echo "     Watch the arm — it should move to neutral pose."
 echo
 echo "  5. Smoke-test the NPU:"
-echo "       source board_env.sh && python yolo_selftest.py"
+echo "       source scripts/board-env.sh && python tools/diagnostics/yolo_selftest.py"
 echo "     Expect: NPU=YES (Hexagon HTP via QNN)"
 echo
 echo "  6. Start the demo — it AUTO-STARTS on boot in IDLE (arm still, cloud up)"
@@ -290,16 +290,16 @@ echo "     The preview window shows on HDMI only while the arduino user is"
 echo "     logged in to the desktop; otherwise watch http://<board-ip>:8080/."
 echo
 echo "  7. From the IoTConnect dashboard, run calibrations in this order:"
-echo "       calibrate_ball       (clicks open browser at http://<board-ip>:8000)"
-echo "       calibrate_box"
-echo "       calibrate_offset     (view pose, then grab pose — also teaches YOLO grab depth)"
+echo "       calibrate target=ball     (opens a browser calibrator at http://<board-ip>:8000)"
+echo "       calibrate target=box"
+echo "       calibrate target=offset   (view pose, then grab pose — also teaches YOLO grab depth)"
 echo "       teach_scan_pose name=center  (release_torque -> hand-pose -> hold_pose -> teach)"
 echo "       teach_scan_pose name=left"
 echo "       teach_scan_pose name=right"
 echo "       teach_drop_pose      (pose gripper above box, snapshot)"
 echo
 echo "  8. Run pickplace:"
-echo "       set_mode_pickplace   (cloud cmd)"
+echo "       set_mode mode=pickplace   (cloud cmd)"
 echo "     Open http://<board-ip>:8000/ in any browser to watch."
 echo
 echo "Done. See README.md for details on each command + their args."

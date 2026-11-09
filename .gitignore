@@ -4,7 +4,8 @@ __pycache__/
 .DS_Store
 
 # Editor / tooling state — personal, not for the repo
-.claude/
+.claude/*
+!.claude/CLAUDE.md
 .vscode/
 .idea/
 
@@ -25,7 +26,7 @@ __pycache__/
 #   - per-board calibration values (camera, HSV, geometry)
 #   - per-deployment IoTConnect credentials
 #   - launcher logs
-#   - on-device model weights downloaded by get_model.sh
+#   - on-device model weights downloaded by get-model.sh
 ball_color.json
 box_color.json
 box_pose.json
@@ -62,3 +63,6 @@ runs/
 *.zip
 best.pt
 best.onnx
+
+# Temporary (typically AI agent) work files
+/work*/

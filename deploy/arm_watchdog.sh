@@ -35,8 +35,8 @@ arm_id() {
         return
     done
 }
-# board_use_display (shared with board_env.sh)
-. "$BASE/deploy/display_env.sh"
+# board_use_display (shared with board-env.sh)
+. "$BASE/deploy/display-env.sh"
 
 demo_running() { pgrep -f 'python -u main.py' >/dev/null; }
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }

@@ -22,24 +22,22 @@ import traceback
 import warnings
 from collections import deque
 from dataclasses import asdict
-from datetime import datetime
 
 # Suppress google-crc32c pure-Python fallback warning emitted by boto3
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="google_crc32c")
 
 import cv2
-import numpy as np
 
-import camera_settings as cam_settings
-import grab_threshold_store
-import scan_poses_store
-import systemdata
+from core import camera_settings as cam_settings
+from core import grab_threshold_store
+from core import scan_poses_store
+from core import systemdata
 import xarm
 
 from modes import make_mode
 
 try:
-    import app_webrtc
+    from core import app_webrtc
     WEBRTC_AVAILABLE = True
 except ImportError:
     app_webrtc = None
@@ -268,29 +266,29 @@ CALIBRATOR_COMMAND_NAMES = {'calibrate_ball', 'calibrate_box', 'calibrate_offset
 
 def _build_calibrator_argv(name, camera_index):
     """Return the argv that spawns the named calibrator as a subprocess.
-    Uses the project's browser_calibrate.py (HTTP+MJPEG on port 8000) so the
+    Uses the project's calibration/browser_calibrate.py (HTTP+MJPEG on port 8000) so the
     calibration UI is reachable from any browser on the LAN — no display
     server required on the board side."""
     here = os.path.dirname(os.path.abspath(__file__))
     table = {
         'calibrate_ball': [
-            sys.executable, os.path.join(here, 'browser_calibrate.py'),
+            sys.executable, os.path.join(here, 'calibration', 'browser_calibrate.py'),
             '--no-prompt', '--output', 'ball_color.json',
             '--camera', str(camera_index),
         ],
         'calibrate_box': [
-            sys.executable, os.path.join(here, 'browser_calibrate.py'),
+            sys.executable, os.path.join(here, 'calibration', 'browser_calibrate.py'),
             '--no-prompt', '--output', 'box_color.json',
             '--camera', str(camera_index),
         ],
         'calibrate_offset': [
-            sys.executable, os.path.join(here, 'browser_calibrate_offset.py'),
+            sys.executable, os.path.join(here, 'calibration', 'browser_calibrate_offset.py'),
             '--no-prompt', '--camera', str(camera_index),
         ],
         # Grab depth is taught by the same calibrator (its view-pose
         # snapshot), so the grab_depth target opens it too — one calibration.
         'calibrate_grab_depth': [
-            sys.executable, os.path.join(here, 'browser_calibrate_offset.py'),
+            sys.executable, os.path.join(here, 'calibration', 'browser_calibrate_offset.py'),
             '--no-prompt', '--camera', str(camera_index),
         ],
     }
@@ -549,7 +547,7 @@ def _init_iotconnect_client():
             _kvs_client = iotc_publisher.get_kvs_client()
             if _kvs_client is not None:
                 _kvs_client.obtain_credentials()
-                print(f"KVS WebRTC streaming enabled")
+                print("KVS WebRTC streaming enabled")
                 print(f"  Signaling channel ARN: {_kvs_client.get_signaling_channel_arn()}")
                 print(f"  Auto-start: {_kvs_client.is_auto_start()}")
                 if not _kvs_refresh_started:
@@ -735,7 +733,7 @@ def process_iotconnect_commands(arm):
                 # mode prefers this over the default "box_pose - DROP_LIFT_OFFSET"
                 # transport target. Workflow: release_torque -> hand-pose so the
                 # gripper sits just above where you want to release the ball ->
-                # hold_pose -> teach_drop_pose. Then send set_mode_pickplace to
+                # hold_pose -> teach_drop_pose. Then send set_mode mode=pickplace to
                 # reload (or it'll load on the next mode start automatically).
                 try:
                     pose_list = [[sid, max(0, min(1000, int(arm.getPosition(sid))))]
@@ -745,7 +743,7 @@ def process_iotconnect_commands(arm):
                     with open(path, 'w') as f:
                         json.dump({str(p[0]): p[1] for p in pose_list}, f, indent=2)
                     ack_message = (f"saved drop pose to {path}: {pose_list}. "
-                                   f"Send set_mode_pickplace to reload.")
+                                   f"Send set_mode mode=pickplace to reload.")
                 except Exception as e:
                     ack_status = C2dAck.CMD_FAILED
                     ack_message = f"teach_drop_pose failed: {e}"
@@ -1404,7 +1402,7 @@ def run_mode(arm, mode, camera_index=2, frame_w=640, frame_h=480,
     web = None
     if web_port:
         try:
-            from web_view import WebView
+            from core.web_view import WebView
             web = WebView(port=web_port)
             print(f"[INFO] Live web view: {web.url_hint()}")
         except Exception as e:

@@ -9,12 +9,12 @@ bootstrap-new-board.sh installs a COCO object detector that runs on the Hexagon:
     /etc/models/yolox_quantized.tflite   (+ /etc/labels/yolox.json)
 
 COCO class 32 is 'sports ball', so the ball-pickup demo needs no training and
-no download — yolo_pickplace.py points at that model by default.
+no download — tools/yolo_pickplace.py points at that model by default.
 
 To use a CUSTOM model (e.g. a 2-class ball+box detector) you need a w8a8
 (INT8) TFLite export with the same output layout (boxes/scores/class_idx),
 produced via Qualcomm AI Hub (https://aihub.qualcomm.com) targeting QCS8275.
-Drop it next to the others and run:  yolo_pickplace.py --model /path/to.tflite
+Drop it next to the others and run:  tools/yolo_pickplace.py --model /path/to.tflite
 """
 
 import os
@@ -25,7 +25,7 @@ BOARD_MODEL = "/etc/models/yolox_quantized.tflite"
 def main():
     if os.path.exists(BOARD_MODEL):
         print(f"[get_yolo_model] board model present: {BOARD_MODEL}")
-        print("[get_yolo_model] nothing to do — yolo_pickplace.py uses it by default.")
+        print("[get_yolo_model] nothing to do — tools/yolo_pickplace.py uses it by default.")
     else:
         print(f"[get_yolo_model] {BOARD_MODEL} NOT found.")
         print("[get_yolo_model] re-run ./bootstrap-new-board.sh to fetch "

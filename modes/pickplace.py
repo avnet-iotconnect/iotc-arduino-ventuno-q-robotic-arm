@@ -34,12 +34,12 @@ from .base import Mode
 from .ball_follow import (
     BallFollowMode,
     SCAN_POSES, SCAN_POSE_LABELS, SCAN_DWELL_S, SCAN_MOVE_MS,
-    HOME_POSE, HOME_POSE_KEEP_GRIP,
+    HOME_POSE_KEEP_GRIP,
     SERVO_GRIPPER, SERVO_WRIST_FLEX, SERVO_SHOULDER_LIFT, SERVO_SHOULDER_PAN,
     PAN_GAIN, TILT_GAIN, PAN_DIR, TILT_DIR,
     MAX_STEP, MIN_TRIM_STEP_PAN,
-    MOVE_DURATION_MS, CENTER_DEADBAND_PX,
-    PAN_MIN, PAN_MAX, LIFT_MAX, pan_limits, open_gripper_firmly,
+    MOVE_DURATION_MS,
+    pan_limits, open_gripper_firmly,
     NO_BALL_GRACE_FRAMES,
     MIN_CONTOUR_AREA, MIN_FILL_RATIO,
     CAM_GRIPPER_OFFSET_X, CAM_GRIPPER_OFFSET_Y,
@@ -74,13 +74,10 @@ BOX_TARGET_RADIUS_PX = 100
 # pointing sideways. 750-1000 is "mostly looking down" on this mount.
 BOX_WRIST_FLEX_MIN = 750
 BOX_WRIST_FLEX_MAX = 1000
-# Centering deadband for BOX_LOCKING. Wider than CENTER_DEADBAND_PX (=80,
-# from ball_follow) because the drop is "open the gripper from above the
-# box" — we don't need the precision a grab needs, and a tight deadband can
-# get stuck when the wrist hits BOX_WRIST_FLEX_MIN/MAX before centering.
-# 150 px on a 480-tall frame ≈ 1/3 of the box opening for a typical demo
-# box, which is plenty of margin for a ball drop.
-BOX_CENTER_DEADBAND_PX = 200       # 2026-04-27: bumped from 150 → 200 to match BOX_VERIFY_DEADBAND_PX. With BOX_WRIST_FLEX_MIN=750 floor, the controller often can't tilt enough to reach a 150 px deadband — gets stuck commanding -19/frame against the floor. 200 lets the lock complete even when the wrist is near its allowed limit. The drop pose tolerates this — we only need to know roughly where the box is, not its exact pixel center.
+# Centering deadband for BOX_LOCKING. Much wider than the ball's CENTER_DEADBAND_PX: a drop from above the box
+# doesn't need grab precision, and with wrist_flex limited to BOX_WRIST_FLEX_MIN/MAX a tight deadband often can't
+# be reached, leaving the lock stuck pushing against the wrist limit.
+BOX_CENTER_DEADBAND_PX = 200
 
 # Quadrilateral filter: contours that approximate to 4-6 vertices pass.
 # 4 = a clean rectangle, 5-6 covers small noise spikes on the polygon edges.
@@ -225,7 +222,9 @@ DROP_LIFT_OFFSET = 50
 #   drifted   → BOX_LOCKING (visually re-lock + re-save)
 #   missing   → BOX_SEEK from scan pose 0 (full envelope re-scan)
 BOX_VERIFY_MOVE_MS = 1500          # how long the move from home → saved box pose takes
-BOX_VERIFY_DEADBAND_PX = 200       # 2026-04-27: bumped from 80 → 200 because BOX_LOCKING (re-lock path triggered when verify fails) constrains wrist_flex to BOX_WRIST_FLEX_MIN..MAX (750..1000) — at the lower bound the controller can't tilt further to reduce tilt_err. Live: BOX_VERIFY tripped on tilt_err=168 (just over 80), re-locking ran tilt -19/frame against the wrist floor and got stuck forever. The saved drop pose is fine even with significant verify drift; tighter re-locking helps grab accuracy, not drop accuracy. 200 px on a 480-tall frame is ~40% — covers normal box-position noise without false-tripping into a stuck re-lock.
+# Same as BOX_CENTER_DEADBAND_PX: a tighter verify trips into a re-lock that can't reach its own deadband.
+# ~40% of a 480 px frame covers normal box-position noise; the drop doesn't need more precision.
+BOX_VERIFY_DEADBAND_PX = 200
 BOX_VERIFY_GRACE_FRAMES = 8        # frames to wait for the box to appear before declaring "missing" and falling back to BOX_SEEK; ~1.5 s at 5 fps
 
 
@@ -235,7 +234,7 @@ class PickPlaceMode(Mode):
     def __init__(self):
         # Same scan-pose override system the ball mode uses (scan_poses.json
         # written by the teach_scan_pose cloud command).
-        import scan_poses_store
+        from core import scan_poses_store
         loaded_poses, loaded_labels = scan_poses_store.load()
         if loaded_poses:
             self.scan_poses = loaded_poses
@@ -249,7 +248,7 @@ class PickPlaceMode(Mode):
         # actually is, not where the camera optical axis points). Applied to
         # box centering target. Falls back to module constants if not yet
         # calibrated.
-        import cam_gripper_offset_store
+        from core import cam_gripper_offset_store
         ofs = cam_gripper_offset_store.load()
         if ofs:
             self.cam_gripper_offset_x = int(ofs.get('cam_gripper_offset_x', CAM_GRIPPER_OFFSET_X))
@@ -275,7 +274,7 @@ class PickPlaceMode(Mode):
         if not os.path.exists(BOX_COLOR_PATH):
             raise RuntimeError(
                 f"box_color.json not found at {BOX_COLOR_PATH}. "
-                "Run: python3 ball_calibrate.py --output box_color.json")
+                "Run: python3 calibration/ball_calibrate.py --output box_color.json")
         with open(BOX_COLOR_PATH) as f:
             cfg = json.load(f)
         self.lower = np.array([cfg["h_min"], cfg["s_min"], cfg["v_min"]], dtype=np.uint8)

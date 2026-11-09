@@ -1,4 +1,4 @@
-# Extra dependency for the standalone YOLO pick-place app (yolo_pickplace.py)
+# Extra dependency for the standalone YOLO pick-place app (tools/yolo_pickplace.py)
 # on the Arduino VENTUNO Q. Install on top of the base requirements:
 #   ~/miniforge3/envs/iotc-ventuno-xarm/bin/python3 -m pip install -r requirements-yolo.txt
 #

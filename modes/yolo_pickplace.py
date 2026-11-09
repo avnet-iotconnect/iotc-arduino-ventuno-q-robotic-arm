@@ -26,7 +26,7 @@ import time
 import cv2
 import numpy as np
 
-import grab_threshold_store
+from core import grab_threshold_store
 from . import ball_follow as bf
 from .ball_follow import BallFollowMode
 from .pickplace import PickPlaceMode
@@ -285,7 +285,6 @@ class YoloBallFollowMode(BallFollowMode):
         radius_err = self.target_radius_px - br
         centered_ok = abs(pan_err) <= bf.CENTER_DEADBAND_PX and abs(tilt_err) <= bf.GRAB_TILT_DEADBAND_PX
         approach_centered_ok = abs(pan_err) <= bf.APPROACH_DEADBAND_PX and abs(tilt_err) <= bf.APPROACH_DEADBAND_PX
-        radius_ok = abs(radius_err) <= self.radius_tol
         # Sticky-centered: at close range each 18-unit pan can fling the ball
         # past the deadband, so centered_ok flickers. Latch it for a few
         # frames after it first becomes true so the grab gate fires when
@@ -310,9 +309,8 @@ class YoloBallFollowMode(BallFollowMode):
             r_target = self.r_grab_taught or self.target_radius_px
         r_floor = r_target - bf.radius_tolerance(r_target)
         # Use EWMA-smoothed D for the depth signal (MiDaS has ~20-unit
-        # single-frame noise); raw value kept for the overlay.
+        # single-frame noise). The overlay shows the raw value too.
         D = self.last_depth_at_ball_smoothed
-        D_raw = self.last_depth_at_ball
         use_depth = self.depth is not None and D is not None
         # Both signals are FLOORS with no upper bound — overshooting toward
         # the ball (bigger r, higher D) still counts as "ready to grab";

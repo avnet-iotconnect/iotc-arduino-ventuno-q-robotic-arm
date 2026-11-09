@@ -35,7 +35,7 @@ from .base import Mode
 TELEMETRY_INTERVAL_S = 2.0
 
 try:
-    from point_net import PointNet
+    from core.point_net import PointNet
 except ImportError:
     print("Warning: point_net module not found. Please ensure model/point_net.py exists and that the project root is on PYTHONPATH.")
     PointNet = None

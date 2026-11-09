@@ -1,0 +1,2 @@
+- If creating new files or editing existing files, follow the guidelines @work/GENERAL_GUIDELINES.md.
+- For Python code, also follow @work/STYLE-C.md where it applies.

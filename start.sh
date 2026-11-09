@@ -3,10 +3,10 @@
 # Run from the board's local HDMI terminal so the OpenCV preview window can render.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR" || exit 1
 
 # Python env + NPU runtime paths for this board.
-source "$SCRIPT_DIR/board_env.sh"
+source "$SCRIPT_DIR/scripts/board-env.sh"
 
 LOG="$SCRIPT_DIR/run.log"
 echo "===== START $(date -u +%FT%TZ) =====" | tee "$LOG"

@@ -20,55 +20,51 @@ import cv2
 import numpy as np
 from xarm import Servo
 
-import arm_kinematics
+from core import arm_kinematics
 
 from .base import Mode
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ball_color.json")
 
 # --- tuning knobs ---
-UPDATE_EVERY = 1           # one command per frame; each blocks until done so further throttling pointless
+UPDATE_EVERY = 1           # send a servo command every N frames
 PAN_GAIN = 0.04            # servo units per pixel of horizontal error
-TILT_GAIN = 0.10           # servo units per pixel of vertical error — higher than PAN because wrist_flex is fighting gravity at extended poses; raw step grows fast with error so MAX_STEP gets reached and motion is visible
-# Sign of correction. +1 if "servo value goes up" corresponds to "camera view
-# moves in the +x/+y direction of the pixel frame". Flip either to -1 if the
-# arm moves AWAY from the ball. Determined by live test, not theory.
-PAN_DIR = 1               # MUST stay -1 for current wall mount; verified by user repeatedly. Do NOT flip without explicit instruction.
-TILT_DIR = -1              # was 1; flipped 2026-04-18 — logs showed wrist_flex driving UP when ball was already in top of frame (tilt_err got worse over time). 2026-07-06: briefly flipped to 1 on the tilted mount, live test proved -1 is correct (ball at bottom of frame drove further down with 1). The look-alike failure mode is NOT a wrong sign — it's the taught scan pose parking wrist_flex at the ~1000 stop, leaving zero travel for ball-above corrections (flex pinned at limit, |tilt_err| frozen). Fix that by re-teaching the pose with flex <= ~900, not by flipping this.
-APPROACH_STEP = 15         # shoulder_lift step toward the ball when too far. Raised from 6 on 2026-04-19 — at extended poses (shoulder_lift>600) a 6-unit command silently fails to break shoulder_lift's static friction, same friction-floor failure mode as MIN_TRIM_STEP_PAN. Lift sat at 630 for many seconds with d_lift=6 firing every frame; ball never got closer. 15 is enough to actually move the servo. Wrist co-trim during descent absorbs the larger per-step ball-shift in the frame.
+TILT_GAIN = 0.10           # higher than PAN_GAIN because wrist_flex fights gravity at extended poses
+# Correction signs, found by live test. Flip one if the arm moves away from the ball on that axis.
+# If wrist_flex is pinned near 1000 the tilt sign is not the problem: re-teach the scan pose with wrist_flex <= ~900.
+PAN_DIR = 1
+TILT_DIR = -1
+# Bus servos ignore commands below a friction floor, so steps and trims are floored. The floor is higher at
+# extended poses (shoulder_lift > 600) and on shoulder_pan, which carries the whole forearm + wrist + camera.
+APPROACH_STEP = 15         # shoulder_lift step toward the ball
 ELBOW_REACH_RATIO = 0.6    # elbow_flex contribution per unit of shoulder_lift during approach
-TILT_ELBOW_RATIO = 0.0     # disabled 2026-04-19 — telemetry showed elbow_flex draining to floor (clamp=0) because tilt's negative contribution outweighed approach's positive one over many frames; once elbow saturates the assist is wasted anyway. Wrist alone handles tilt with the wider CENTER_DEADBAND_PX
+TILT_ELBOW_RATIO = 0.0     # elbow assist for tilt; off because it drained elbow_flex to its limit over many frames
 TILT_ELBOW_DIR = 1         # flip to -1 if elbow moves wrong way for tilt
-MAX_STEP = 25              # cap on any single-update servo delta — raised so larger errors actually translate to a visible move; the bus servo has plenty of torque headroom for 25-unit steps
-MIN_TRIM_STEP = 14         # any non-zero trim is bumped to at least this magnitude — bus servos ignore small commands (static friction), so a 3-unit "trim" is a no-op and tilt_err sits forever just outside CENTER_DEADBAND_PX without ever converging. Tuned for wrist_flex (the only joint using this default). Raised 8 -> 14 on 2026-09-10: with the camera+gripper hanging off the wrist at flex ~870, an 8-unit command didn't move it at all — telemetry showed wrist_flex 867/868 for a minute while the controller sent dtilt=-8 every frame at tilt_err 77 px, so descent (gated on APPROACH_DEADBAND_PX) never started. 14 units ≈ 100 px at ~7 px/unit: a 77 px error lands ~20 px inside the deadband, and it's still below the 18-unit pan floor that oscillates.
-MIN_TRIM_STEP_PAN = 18     # shoulder_pan carries the whole forearm + wrist + camera, so its static friction is much higher than wrist_flex — 8-unit commands stall in extended poses (shoulder_lift>600). Verified 2026-04-19 with telemetry showing pan stuck at 552-553 while controller commanded +8 every frame.
-MOVE_DURATION_MS = 220     # per-step move duration; raised so small servo commands actually move (under 150ms many bus servos ignore sub-5-unit deltas)
-CENTER_DEADBAND_PX = 60    # widened 2026-04-19 from 25 — must be >= MIN_TRIM_STEP_PAN × pixels-per-servo-unit (~7 px/unit measured), otherwise a single floored pan command (18 units = ~126 px of ball motion) flings the ball clear past the deadband and the controller oscillates +18, -18, +18 forever. Trade-off: GRAB now fires at up to 60 px off-target, but the gripper jaw is wider than that
-APPROACH_DEADBAND_PX = 60  # 2026-05-02 reverted from a brief 120 experiment. On this Tria + downward-pointing-Brio geometry, descent (shoulder_lift extending forward) moves the ball further past the camera frame ("behind" the arm) — descent reframing fights wrist trim, ball escapes downward, controller cycles SCANNING → TRACKING → SCANNING. Keeping descent gated by tight 60 means: center first (slow when wrist friction-stalls just outside 60), then descend; if you see "stuck at dy~67 forever" with wrist_flex not moving, the fix is to RAISE MIN_TRIM_STEP (done 8 -> 14 on 2026-09-10) so the wrist actually breaks friction — NOT to widen this deadband.
-TARGET_RADIUS_PX = 220     # ball "close enough" radius in pixels (lowered to match what we actually observe at grab distance for the current ball)
+MAX_STEP = 25              # cap on any single-frame servo change
+MIN_TRIM_STEP = 14         # smallest wrist_flex correction (8 didn't move the loaded wrist)
+MIN_TRIM_STEP_PAN = 18     # smallest shoulder_pan correction
+MOVE_DURATION_MS = 220     # per-step move duration; under ~150 ms many bus servos ignore small moves
+# One floored pan step shifts the image ~126 px (~7 px/unit), so a narrow left/right deadband makes pan overshoot
+# back and forth. 60 px is still inside the jaw opening.
+CENTER_DEADBAND_PX = 60
+# Reaching shifts the ball in the image, so the ball must be this centered before reaching. If the wrist stalls just
+# outside it, raise MIN_TRIM_STEP rather than widening this.
+APPROACH_DEADBAND_PX = 60
+TARGET_RADIUS_PX = 220     # fallback grab radius; normally replaced by calibrate_offset's target_radius_px
 RADIUS_TOLERANCE = 40      # +/- around TARGET_RADIUS_PX considered "at distance" (legacy fixed value; see radius_tolerance())
 RADIUS_TOLERANCE_FRAC = 0.15  # tolerance as a fraction of the target radius: a fixed 40 px suited
                               # the Tria's ball at r=220 but accepts r=28..108 for a ball taught at 68
 MIN_CONTOUR_AREA = 200     # ignore tiny mask blobs (noise)
 MIN_FILL_RATIO = 0.65      # contour_area / enclosing_circle_area; ball ≈0.85+, irregular blobs typically <0.5
-# Camera-to-gripper offset in image pixels — measured 2026-04-18 with
-# calibrate_cam_offset.py: arm posed so gripper was physically over the ball,
-# then median (bx-320, by-240) over ~30 frames. The negative X means the
-# gripper sits to the LEFT of the camera optical axis in raw frame coords;
-# Y > 0 means the gripper sits BELOW the optical axis. Controller now aims
-# at this pixel so "centered" actually means "gripper over ball".
+# Fallback aim point offset from the image center, in pixels (raw, unmirrored frame). Normally replaced by the
+# calibrate_offset view pose, so "centered" means "gripper over the ball" for this camera mount.
 CAM_GRIPPER_OFFSET_X = 0
 CAM_GRIPPER_OFFSET_Y = 0
 # --- search envelope ---
-PAN_MIN = 90               # shoulder_pan clamped to [PAN_MIN, PAN_MAX] during live tracking.
-PAN_MAX = 860              # 2026-07-19: widened from [300, 800] to cover the taught scan
-                           # envelope (left pose pan=93, right pose pan=854 on the tilted
-                           # mount) — the old clamp let scanning FIND a ball the tracker
-                           # was then forbidden to FOLLOW: pan pinned at the clamp,
-                           # remainder under MIN_TRIM_STEP_PAN static friction, pan_err
-                           # frozen just outside the deadband, grab never fires. Modes
-                           # widen this automatically to cover the taught scan poses
-                           # (pan_limits()), so these are only the minimum envelope.
+# Minimum shoulder_pan range while tracking. pan_limits() widens it to cover every scan pose, otherwise a ball found
+# from an edge scan pose can't be followed.
+PAN_MIN = 90
+PAN_MAX = 860
 # Hard safety limits so an approach that never satisfies radius_ok (bad HSV, wrong-sized ball,
 # mis-set TARGET_RADIUS_PX) can't drive the gripper into the table. Tune by teach-mode probing.
 LIFT_MAX = 800             # shoulder_lift ceiling during approach (larger = reach further down)
@@ -82,7 +78,9 @@ APPROACH_REACH = 250       # how far past the calibrated view pose the shoulder 
 REACH_MARGIN = 100         # ... and the elbow, when reaching means bending it further
 SCAN_DWELL_S = 1.5         # hold each scan pose this long before advancing
 SCAN_MOVE_MS = 2500        # duration for the move between scan poses (slowed so right-pose lift=635 doesn't plunge toward table)
-NO_BALL_GRACE_FRAMES = 30  # ~5s at 6 fps — hold pose when ball briefly disappears (clipping, HSV flicker) instead of bouncing back to scan; the scan re-entry was producing the visible "shaking" between brief-track and scan-move every time detection flickered
+# Frames without a ball before scanning resumes (~5 s at 6 fps). Holding the pose through brief detection drop-outs
+# stops the arm shaking between tracking and scanning.
+NO_BALL_GRACE_FRAMES = 30
 # --- prediction + telemetry ---
 ENABLE_PREDICTION = False        # master switch for extrapolating ball motion when it's lost
 POS_BUFFER_LEN = 5               # how many recent ball positions we keep for velocity est
@@ -123,9 +121,8 @@ SERVO_ELBOW_FLEX = 4
 SERVO_SHOULDER_LIFT = 5    # smaller = lift up; larger = reach forward/down
 SERVO_SHOULDER_PAN = 6     # smaller = pan left; larger = pan right (verify w/ live test)
 
-# Scan poses — cycled through while no ball is seen. Captured 2026-04-18 via
-# teach_pose.py for the wall/VESA-mounted arm looking down at the table.
-# wrist_roll forced to 500 (neutral) so the wrist_flex axis produces pure
+# Default scan poses, cycled through while no ball is seen (taught with teach_pose.py
+# for a wall-mounted arm looking down at the table). wrist_roll forced to 500 (neutral) so the wrist_flex axis produces pure
 # pitch. Off-neutral roll rotates the image, which decouples pixel dx/dy
 # from the pan/flex servos and causes tracking to oscillate.
 SCAN_POSES = [
@@ -366,7 +363,7 @@ class BallFollowMode(Mode):
         # Scan-pose override system (scan_poses.json written by the
         # teach_scan_pose cloud command) — same as PickPlaceMode. Falls back
         # to the hardcoded SCAN_POSES when nothing has been taught.
-        import scan_poses_store
+        from core import scan_poses_store
         loaded_poses, loaded_labels = scan_poses_store.load()
         if loaded_poses:
             self.scan_poses = loaded_poses
@@ -385,7 +382,7 @@ class BallFollowMode(Mode):
         # the image and how big it should look when tracking stops, plus the
         # optional taught reach from there to the grab pose. Falls back to the
         # module constants (no reach) when nothing has been calibrated.
-        import cam_gripper_offset_store
+        from core import cam_gripper_offset_store
         ofs = cam_gripper_offset_store.load() or {}
         self.offset_x = int(ofs.get('cam_gripper_offset_x', CAM_GRIPPER_OFFSET_X))
         self.offset_y = int(ofs.get('cam_gripper_offset_y', CAM_GRIPPER_OFFSET_Y))
@@ -406,7 +403,7 @@ class BallFollowMode(Mode):
 
     def setup(self, arm):
         if not os.path.exists(CONFIG_PATH):
-            raise RuntimeError(f"ball_color.json not found at {CONFIG_PATH}; run ball_calibrate.py first")
+            raise RuntimeError(f"ball_color.json not found at {CONFIG_PATH}; run calibration/ball_calibrate.py first")
         with open(CONFIG_PATH) as f:
             cfg = json.load(f)
         self.lower = np.array([cfg["h_min"], cfg["s_min"], cfg["v_min"]], dtype=np.uint8)
@@ -610,18 +607,11 @@ class BallFollowMode(Mode):
                 # direction that extends THIS arm (see ApproachPlan).
                 d_lift, d_reach_elbow = step
                 d_elbow += d_reach_elbow
-                # Co-trim wrist during descent even when inside CENTER_DEADBAND_PX.
-                # Each lift step shifts the ball ~30 px upward in the frame (5 px per
-                # lift unit measured 2026-04-19), which kicks tilt_err well past the
-                # 60 px deadband and the wrist alone needs 5+ frames to recover —
-                # producing the "descend once every several frames, prefers center=NO"
-                # pattern. Issuing the wrist nudge in the same setPosition as the lift
-                # serializes "descend + recenter" into one command, so the controller
-                # makes net progress every frame instead of ping-ponging.
-                # Pan is NOT co-trimmed: lift/elbow don't shift ball horizontally
-                # much, and a floored MIN_TRIM_STEP_PAN command for a within-deadband
-                # error overshoots the deadband (~126 px shift > 60 px deadband),
-                # causing the same +18/-18 sign-flip oscillation we hit on 2026-04-19.
+                # Trim the wrist with every reach step, even inside the deadband. Each lift step shifts the ball
+                # ~30 px in the image (~5 px per lift unit); recentering in the same command keeps the ball
+                # in view instead of alternating reach and recenter frames.
+                # Pan is not trimmed here: reaching barely moves the ball sideways, and a floored pan step
+                # (~126 px) would overshoot the deadband and oscillate.
                 if d_tilt == 0 and tilt_err != 0:
                     d_tilt = int(round(_step_toward(tilt_err, TILT_GAIN, MAX_STEP))) * TILT_DIR
 
